@@ -1,8 +1,11 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Send, RefreshCw } from 'lucide-react';
+import { Send, RefreshCw, Brain, Lightbulb } from 'lucide-react';
 import { clsx } from 'clsx';
+import SuggestionsPanel from '../components/SuggestionsPanel';
+import MemoryViewer from '../components/MemoryViewer';
+import MemoryGraphVisualization from '../components/MemoryGraphVisualization';
 
 interface ChatMessage {
   id: string;
@@ -30,6 +33,9 @@ export default function ChatPage() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [requestStartTime, setRequestStartTime] = useState<Date | null>(null);
   const [elapsedTime, setElapsedTime] = useState(0);
+  const [showMemoryViewer, setShowMemoryViewer] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [showMemoryGraph, setShowMemoryGraph] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -208,8 +214,7 @@ export default function ChatPage() {
         },
         body: JSON.stringify({
           message: userMessage.message,
-          session_id: sessionId,
-          conversation_context: conversationContext,
+          speaker: 'andrew',
         }),
       });
 
@@ -217,12 +222,7 @@ export default function ChatPage() {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      const data: ChatResponse = await response.json();
-
-      // Update session ID if we got a new one
-      if (data.session_id && data.session_id !== sessionId) {
-        setSessionId(data.session_id);
-      }
+      const data = await response.json();
 
       // Calculate response time
       const endTime = new Date();
@@ -239,14 +239,6 @@ export default function ChatPage() {
 
       setMessages(prev => [...prev, aiMessage]);
 
-      // Update cache metadata with server response data
-      if (data.timestamp && data.cache_version) {
-        const cacheInfo = {
-          lastTimestamp: data.timestamp,
-          cacheVersion: data.cache_version
-        };
-        localStorage.setItem('son-of-andrew-cache-info', JSON.stringify(cacheInfo));
-      }
     } catch (error) {
       console.error('Failed to send message:', error);
       
@@ -278,6 +270,15 @@ export default function ChatPage() {
     clearCache();
   };
 
+  const handleSuggestionSelect = (suggestion: any) => {
+    // When a suggestion is accepted, add it as a message to continue the conversation
+    setInputMessage(suggestion.content);
+    setShowSuggestions(false);
+    
+    // Optionally auto-send the suggestion
+    // Or just populate the input field for the user to review and send
+  };
+
   return (
     <div className="flex flex-col h-screen bg-gray-50 font-roboto">
       {/* Header */}
@@ -294,85 +295,127 @@ export default function ChatPage() {
               )}
             </div>
           </div>
-          {messages.length > 0 && (
+          <div className="flex items-center gap-2">
             <button
-              onClick={clearChat}
+              onClick={() => setShowMemoryViewer(!showMemoryViewer)}
               className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
             >
-              <RefreshCw className="w-4 h-4" />
-              New Chat
+              <Brain className="w-4 h-4" />
+              {showMemoryViewer ? 'Hide' : 'Show'} Memory Viewer
             </button>
-          )}
+            <button
+              onClick={() => setShowMemoryGraph(!showMemoryGraph)}
+              className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              <Brain className="w-4 h-4" />
+              {showMemoryGraph ? 'Hide' : 'Show'} Memory Graph
+            </button>
+            <button
+              onClick={() => setShowSuggestions(true)}
+              className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              <Lightbulb className="w-4 h-4" />
+              Suggestions
+            </button>
+            {messages.length > 0 && (
+              <button
+                onClick={clearChat}
+                className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <RefreshCw className="w-4 h-4" />
+                New Chat
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-6">
-        <div className="max-w-4xl mx-auto space-y-4">
-          {messages.length === 0 ? (
-            <div className="flex items-center justify-center h-full min-h-[400px]">
-              <div className="text-center">
-                <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <span className="text-3xl">🤖</span>
+      {/* Main Content */}
+      <div className="flex-1 flex">
+        {/* Chat Messages */}
+        <div className={clsx("flex-1 overflow-y-auto px-4 py-6", showMemoryViewer && "hidden md:block")}>
+          <div className="max-w-4xl mx-auto space-y-4">
+            {messages.length === 0 ? (
+              <div className="flex items-center justify-center h-full min-h-[400px]">
+                <div className="text-center">
+                  <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <span className="text-3xl">🤖</span>
+                  </div>
+                  <h2 className="text-2xl font-medium text-gray-800 mb-2">Welcome to Son of Andrew</h2>
+                  <p className="text-gray-600">Send a message to start the conversation</p>
                 </div>
-                <h2 className="text-2xl font-medium text-gray-800 mb-2">Welcome to Son of Andrew</h2>
-                <p className="text-gray-600">Send a message to start the conversation</p>
               </div>
-            </div>
-          ) : (
-            <>
-              {messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={clsx(
-                    'flex',
-                    message.isUser ? 'justify-end' : 'justify-start'
-                  )}
-                >
+            ) : (
+              <>
+                {messages.map((message) => (
                   <div
+                    key={message.id}
                     className={clsx(
-                      'max-w-xs md:max-w-md lg:max-w-lg px-4 py-3 rounded-2xl shadow-sm',
-                      message.isUser
-                        ? 'bg-blue-500 text-white rounded-br-md'
-                        : 'bg-white text-gray-800 rounded-bl-md border border-gray-200'
+                      'flex',
+                      message.isUser ? 'justify-end' : 'justify-start'
                     )}
                   >
-                    <p className="text-sm leading-relaxed whitespace-pre-wrap">{message.message}</p>
-                    <p
+                    <div
                       className={clsx(
-                        'text-xs mt-2 opacity-70',
-                        message.isUser ? 'text-blue-100' : 'text-gray-500'
+                        'max-w-xs md:max-w-md lg:max-w-lg px-4 py-3 rounded-2xl shadow-sm',
+                        message.isUser
+                          ? 'bg-blue-500 text-white rounded-br-md'
+                          : 'bg-white text-gray-800 rounded-bl-md border border-gray-200'
                       )}
                     >
-                      {message.timestamp.toLocaleTimeString([], { 
-                        hour: '2-digit', 
-                        minute: '2-digit' 
-                      })}
-                      {!message.isUser && message.responseTime && (
-                        <span className="ml-2">• {message.responseTime}s response</span>
-                      )}
-                    </p>
-                  </div>
-                </div>
-              ))}
-              
-              {isLoading && (
-                <div className="flex justify-start">
-                  <div className="bg-white text-gray-800 max-w-xs md:max-w-md lg:max-w-lg px-4 py-3 rounded-2xl rounded-bl-md shadow-sm border border-gray-200">
-                    <div className="flex items-center space-x-2">
-                      <div className="flex items-center justify-center w-8 h-8 bg-blue-100 rounded-full">
-                        <span className="text-sm font-mono text-blue-600">{elapsedTime}s</span>
-                      </div>
-                      <span className="text-xs text-gray-500">Son of Andrew is thinking...</span>
+                      <p className="text-sm leading-relaxed whitespace-pre-wrap">{message.message}</p>
+                      <p
+                        className={clsx(
+                          'text-xs mt-2 opacity-70',
+                          message.isUser ? 'text-blue-100' : 'text-gray-500'
+                        )}
+                      >
+                        {message.timestamp.toLocaleTimeString([], { 
+                          hour: '2-digit', 
+                          minute: '2-digit' 
+                        })}
+                        {!message.isUser && message.responseTime && (
+                          <span className="ml-2">• {message.responseTime}s response</span>
+                        )}
+                      </p>
                     </div>
                   </div>
-                </div>
-              )}
-              
-              <div ref={messagesEndRef} />
-            </>
-          )}
+                ))}
+                
+                {isLoading && (
+                  <div className="flex justify-start">
+                    <div className="bg-white text-gray-800 max-w-xs md:max-w-md lg:max-w-lg px-4 py-3 rounded-2xl rounded-bl-md shadow-sm border border-gray-200">
+                      <div className="flex items-center space-x-2">
+                        <div className="flex items-center justify-center w-8 h-8 bg-blue-100 rounded-full">
+                          <span className="text-sm font-mono text-blue-600">{elapsedTime}s</span>
+                        </div>
+                        <span className="text-xs text-gray-500">Son of Andrew is thinking...</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                
+                <div ref={messagesEndRef} />
+              </>
+            )}
+          </div>
         </div>
+        
+        {/* Memory Viewer Placeholder */}
+        {showMemoryViewer && (
+          <div className="w-full md:w-1/2 lg:w-2/3 border-l border-gray-200 overflow-y-auto">
+            <MemoryViewer />
+          </div>
+        )}
+        
+        {/* Memory Graph Visualization */}
+        {showMemoryGraph && (
+          <div className="w-full md:w-1/2 lg:w-2/3 border-l border-gray-200 overflow-y-auto">
+            <div className="p-4">
+              <MemoryGraphVisualization />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Input */}
@@ -407,6 +450,13 @@ export default function ChatPage() {
           </p>
         </div>
       </div>
+
+      {/* Suggestions Panel */}
+      <SuggestionsPanel
+        isVisible={showSuggestions}
+        onClose={() => setShowSuggestions(false)}
+        onSuggestionSelect={handleSuggestionSelect}
+      />
     </div>
   );
 } 

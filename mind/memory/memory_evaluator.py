@@ -70,7 +70,95 @@ class MemoryEvaluator:
             r"(interesting|important|significant|notable)"
         ]
         
+        # 🚨 CRITICAL FIX: Explicit memory instruction patterns
+        self.explicit_memory_patterns = [
+            r"remember that (.+)",
+            r"please remember (.+)", 
+            r"don't forget that (.+)",
+            r"make sure you remember (.+)",
+            r"save this (.+)",
+            r"store this (.+)",
+            r"(.+) is my (.+)",  # "Ted is my business partner"
+            r"(.+) works at (.+)",  # "Sarah works at Folk Devils"
+            r"(.+) lives in (.+)",  # "Andrew lives in New York"
+            r"my (.+) is (.+)",  # "my business partner is Ted"
+            r"i work with (.+)",  # "I work with Ted"
+            r"(.+) and i are (.+)",  # "Ted and I are business partners"
+        ]
+        
         logger.info("🧠 Memory evaluator initialized - Ready to curate experiences")
+    
+    async def _detect_explicit_memory_instructions(self, conversation_turns: List[Dict]) -> List[MemoryCandidate]:
+        """
+        🚨 CRITICAL FIX: Detect explicit memory instructions and create high-priority candidates
+        
+        When users say "remember that...", "Ted is my business partner", etc.,
+        these should be immediately stored with maximum importance.
+        """
+        explicit_candidates = []
+        
+        for turn in conversation_turns:
+            if turn['speaker'] != 'andrew':  # Only process Andrew's messages
+                continue
+                
+            content = turn['content']
+            content_lower = content.lower()
+            
+            # Check each explicit memory pattern
+            for pattern in self.explicit_memory_patterns:
+                match = re.search(pattern, content_lower)
+                if match:
+                    # FOUND EXPLICIT MEMORY INSTRUCTION!
+                    logger.info(f"🚨 EXPLICIT MEMORY DETECTED: '{content}' matches pattern '{pattern}'")
+                    
+                    # Determine memory type based on content
+                    memory_type = self._classify_explicit_memory_type(content, pattern)
+                    
+                    # Create high-priority memory candidate that bypasses normal scoring
+                    candidate = MemoryCandidate(
+                        content=content,
+                        memory_type=memory_type,
+                        importance_score=1.0,  # MAXIMUM IMPORTANCE - bypass threshold
+                        emotional_weight=0.8,  # High emotional weight for explicit instructions
+                        participants=['andrew', 'ai-system'],
+                        tags=['explicit_instruction', 'user_directed'] + await self._extract_tags(content),
+                        context={
+                            'timestamp': turn['timestamp'],
+                            'type': 'explicit_memory_instruction',
+                            'pattern_matched': pattern,
+                            'bypassed_evaluation': True,
+                            'source': 'user_explicit_command'
+                        },
+                        source_turns=[turn['timestamp']]
+                    )
+                    explicit_candidates.append(candidate)
+                    
+                    # Don't match multiple patterns for the same content
+                    break
+        
+        if explicit_candidates:
+            logger.info(f"🎯 Found {len(explicit_candidates)} explicit memory instructions - these will be stored with maximum priority!")
+        
+        return explicit_candidates
+    
+    def _classify_explicit_memory_type(self, content: str, pattern: str) -> str:
+        """Classify the type of explicit memory based on content and pattern"""
+        content_lower = content.lower()
+        
+        # Relationship patterns
+        if any(word in content_lower for word in ['partner', 'friend', 'colleague', 'works with', 'team']):
+            return 'relationship'
+        
+        # Identity patterns  
+        if any(word in content_lower for word in ['i am', 'my goal', 'i want', 'i like', 'i dislike']):
+            return 'identity'
+        
+        # Facts and general knowledge
+        if any(word in content_lower for word in ['is', 'works at', 'lives in', 'company', 'project']):
+            return 'semantic'
+        
+        # Default to episodic for explicit instructions
+        return 'episodic'
     
     async def evaluate_session(self, session_data: Dict[str, Any]) -> List[MemoryCandidate]:
         """
@@ -84,19 +172,30 @@ class MemoryEvaluator:
         conversation_turns = session_data.get('conversation_turns', [])
         working_thoughts = session_data.get('working_thoughts', [])
         
-        # Process conversation turns for different types of memories
+        # 🚨 CRITICAL FIX: Check for explicit memory instructions FIRST
+        explicit_candidates = await self._detect_explicit_memory_instructions(conversation_turns)
+        candidates.extend(explicit_candidates)
+        
+        # Process conversation turns for different types of memories (normal evaluation)
         candidates.extend(await self._extract_episodic_memories(conversation_turns, session_data))
         candidates.extend(await self._extract_semantic_memories(conversation_turns))
         candidates.extend(await self._extract_identity_memories(conversation_turns, working_thoughts))
         candidates.extend(await self._extract_relationship_memories(conversation_turns))
         
-        # Filter by importance threshold
+        # Filter by importance threshold (but explicit instructions already have max importance)
         qualified_candidates = [c for c in candidates if c.importance_score >= self.min_importance_threshold]
         
-        # Sort by importance and emotional weight
+        # Sort by importance and emotional weight (explicit instructions will be at the top)
         qualified_candidates.sort(key=lambda c: c.importance_score * c.emotional_weight, reverse=True)
         
-        logger.info(f"💾 Found {len(qualified_candidates)} memory candidates from {len(conversation_turns)} turns")
+        total_candidates = len(candidates)
+        explicit_count = len(explicit_candidates)
+        qualified_count = len(qualified_candidates)
+        
+        logger.info(f"💾 Found {qualified_count} memory candidates from {len(conversation_turns)} turns")
+        if explicit_count > 0:
+            logger.info(f"🎯 Including {explicit_count} explicit memory instructions (guaranteed storage!)")
+        
         return qualified_candidates
     
     async def _extract_episodic_memories(self, 

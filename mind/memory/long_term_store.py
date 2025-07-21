@@ -147,17 +147,36 @@ class LongTermMemory:
                 try:
                     collection = self.client.collections.get(collection_name)
                     
-                    # Semantic search with importance filter
+                    # Semantic search - filter results after retrieval
                     results = collection.query.near_text(
                         query=query,
-                        limit=limit,
-                        where=weaviate.classes.query.Filter.by_property("importance").greater_or_equal(min_importance)
+                        limit=limit * 2  # Get more results to filter from
                     )
                     
+                    # Filter by importance after retrieval
+                    filtered_results = []
                     for obj in results.objects:
+                        # Fix None comparison issue
+                        importance = obj.properties.get('importance', 0.0)
+                        if importance is None:
+                            importance = 0.0
+                        if importance >= min_importance:
+                            filtered_results.append(obj)
+                    
+                    # Take only the requested limit
+                    for obj in filtered_results[:limit]:
+                        # Fix Memory creation to only use expected fields
                         memory = Memory(
                             id=str(obj.uuid),
-                            **obj.properties
+                            timestamp=obj.properties.get('timestamp', ''),
+                            type=obj.properties.get('type', memory_type.lower() if memory_type else 'unknown'),
+                            content=obj.properties.get('content', ''),
+                            emotional_weight=obj.properties.get('emotional_weight', 0.0) or 0.0,
+                            importance=obj.properties.get('importance', 0.0) or 0.0,
+                            participants=obj.properties.get('participants', []) or [],
+                            tags=obj.properties.get('tags', []) or [],
+                            context=obj.properties.get('context', {}) or {},
+                            connections=obj.properties.get('connections', []) or []
                         )
                         memories.append(memory)
                         
@@ -165,8 +184,8 @@ class LongTermMemory:
                     logger.warning(f"Could not search {collection_name}: {e}")
                     continue
             
-            # Sort by importance and emotional weight
-            memories.sort(key=lambda m: m.importance * m.emotional_weight, reverse=True)
+            # Sort by importance and emotional weight (handle None values)
+            memories.sort(key=lambda m: (m.importance or 0.0) * (m.emotional_weight or 0.0), reverse=True)
             
             logger.info(f"🔍 Recalled {len(memories)} memories for: {query[:30]}...")
             return memories[:limit]
@@ -204,9 +223,18 @@ class LongTermMemory:
                     )
                     
                     for obj in results.objects:
+                        # Fix: Only use expected Memory fields, ignore extra Weaviate properties
                         memory = Memory(
                             id=str(obj.uuid),
-                            **obj.properties
+                            timestamp=obj.properties.get('timestamp', ''),
+                            type=obj.properties.get('type', collection_name.replace('Memory', '').lower()),
+                            content=obj.properties.get('content', ''),
+                            emotional_weight=obj.properties.get('emotional_weight', 0.0) or 0.0,
+                            importance=obj.properties.get('importance', 0.0) or 0.0,
+                            participants=obj.properties.get('participants', []) or [],
+                            tags=obj.properties.get('tags', []) or [],
+                            context=obj.properties.get('context', {}) or {},
+                            connections=obj.properties.get('connections', []) or []
                         )
                         # Filter by timestamp manually
                         try:
@@ -303,6 +331,98 @@ class LongTermMemory:
         except Exception as e:
             logger.error(f"❌ Failed to get memory stats: {e}")
             return {"error": str(e)}
+    
+    async def get_memories_since(self, cutoff_date: datetime, limit: int = 100) -> List[Memory]:
+        """Get memories created since a specific date"""
+        try:
+            all_memories = []
+            cutoff_str = cutoff_date.isoformat()
+            
+            for collection_name in ["EpisodicMemory", "SemanticMemory", 
+                                  "IdentityMemory", "RelationshipMemory"]:
+                try:
+                    collection = self.client.collections.get(collection_name)
+                    
+                    # Query for memories since cutoff date
+                    # Using Weaviate v4+ API syntax
+                    try:
+                        response = collection.query.fetch_objects(
+                            limit=limit
+                        )
+                    except Exception as e:
+                        logger.error(f"❌ Error with fetch_objects for {collection_name}: {e}")
+                        continue
+                    
+                    memory_type = collection_name.replace("Memory", "").lower()
+                    
+                    for obj in response.objects:
+                        # Parse timestamp and filter by cutoff date
+                        timestamp_str = obj.properties.get('timestamp', '')
+                        if timestamp_str:
+                            try:
+                                obj_time = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                                if obj_time < cutoff_date:
+                                    continue  # Skip memories older than cutoff
+                            except:
+                                pass  # If timestamp parsing fails, include the memory
+                        
+                        memory = Memory(
+                            id=str(obj.uuid),
+                            timestamp=timestamp_str,
+                            type=memory_type,
+                            content=obj.properties.get('content', ''),
+                            emotional_weight=obj.properties.get('emotional_weight', 0.0),
+                            importance=obj.properties.get('importance', 0.0),
+                            participants=obj.properties.get('participants', []),
+                            tags=obj.properties.get('tags', []),
+                            context=obj.properties.get('context', {}),
+                            connections=obj.properties.get('connections', [])
+                        )
+                        all_memories.append(memory)
+                        
+                except Exception as e:
+                    logger.error(f"❌ Error querying {collection_name}: {e}")
+                    continue
+            
+            # Sort by timestamp (newest first)
+            all_memories.sort(key=lambda m: m.timestamp, reverse=True)
+            return all_memories[:limit]
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get memories since {cutoff_date}: {e}")
+            return []
+    
+    async def get_memories_by_type(self, memory_type: str, limit: int = 50) -> List[Memory]:
+        """Get memories of a specific type"""
+        try:
+            collection_name = f"{memory_type.capitalize()}Memory"
+            collection = self.client.collections.get(collection_name)
+            
+            response = collection.query.fetch_objects(limit=limit)
+            memories = []
+            
+            for obj in response.objects:
+                memory = Memory(
+                    id=str(obj.uuid),
+                    timestamp=obj.properties.get('timestamp', ''),
+                    type=memory_type,
+                    content=obj.properties.get('content', ''),
+                    emotional_weight=obj.properties.get('emotional_weight', 0.0),
+                    importance=obj.properties.get('importance', 0.0),
+                    participants=obj.properties.get('participants', []),
+                    tags=obj.properties.get('tags', []),
+                    context=obj.properties.get('context', {}),
+                    connections=obj.properties.get('connections', [])
+                )
+                memories.append(memory)
+            
+            # Sort by timestamp (newest first)
+            memories.sort(key=lambda m: m.timestamp, reverse=True)
+            return memories
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get {memory_type} memories: {e}")
+            return []
     
     def close(self):
         """Close connection to my memory system"""
