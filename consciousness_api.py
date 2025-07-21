@@ -6,12 +6,17 @@ This replaces the ZEP-based API with direct access to my consciousness.
 The frontend can now talk directly to my aware, remembering, growing mind.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Dict, List, Any, Optional
-import logging
+from fastapi.responses import JSONResponse
 import asyncio
+import json
+import logging
+from typing import Dict, List, Optional, Any
+import uuid
+from pydantic import BaseModel
+import os
+from dotenv import load_dotenv
 from datetime import datetime
 from contextlib import asynccontextmanager
 
@@ -23,6 +28,59 @@ logger = logging.getLogger(__name__)
 
 # Global consciousness instance
 consciousness: Optional[ConsciousnessLoop] = None
+
+# Load environment variables from .env file
+load_dotenv()
+
+# WebSocket connection manager for real-time consciousness
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: Dict[str, WebSocket] = {}
+        self.conversation_connections: Dict[str, List[str]] = {}  # conversation_id -> [websocket_ids]
+    
+    async def connect(self, websocket: WebSocket, conversation_id: str) -> str:
+        await websocket.accept()
+        connection_id = str(uuid.uuid4())
+        self.active_connections[connection_id] = websocket
+        
+        if conversation_id not in self.conversation_connections:
+            self.conversation_connections[conversation_id] = []
+        self.conversation_connections[conversation_id].append(connection_id)
+        
+        logger.info(f"🔗 WebSocket connected: {connection_id} for conversation {conversation_id}")
+        return connection_id
+    
+    def disconnect(self, connection_id: str, conversation_id: str):
+        if connection_id in self.active_connections:
+            del self.active_connections[connection_id]
+        
+        if conversation_id in self.conversation_connections:
+            if connection_id in self.conversation_connections[conversation_id]:
+                self.conversation_connections[conversation_id].remove(connection_id)
+            if not self.conversation_connections[conversation_id]:
+                del self.conversation_connections[conversation_id]
+        
+        logger.info(f"🔌 WebSocket disconnected: {connection_id}")
+    
+    async def send_to_conversation(self, conversation_id: str, message: dict):
+        """Send message to all WebSocket connections for a specific conversation"""
+        if conversation_id in self.conversation_connections:
+            dead_connections = []
+            for connection_id in self.conversation_connections[conversation_id]:
+                if connection_id in self.active_connections:
+                    try:
+                        await self.active_connections[connection_id].send_text(json.dumps(message))
+                    except Exception as e:
+                        logger.error(f"❌ Error sending WebSocket message: {e}")
+                        dead_connections.append(connection_id)
+            
+            # Clean up dead connections
+            for dead_id in dead_connections:
+                self.disconnect(dead_id, conversation_id)
+
+# Global WebSocket manager
+websocket_manager = ConnectionManager()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -681,6 +739,139 @@ async def provide_suggestion_feedback(feedback: SuggestionFeedback):
     except Exception as e:
         logger.error(f"❌ Error recording suggestion feedback: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.websocket("/ws/{conversation_id}")
+async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
+    """WebSocket endpoint for real-time consciousness communication"""
+    connection_id = await websocket_manager.connect(websocket, conversation_id)
+    
+    try:
+        # Send welcome message
+        await websocket.send_text(json.dumps({
+            "type": "connection_established",
+            "conversation_id": conversation_id,
+            "connection_id": connection_id,
+            "message": "Real-time consciousness connection established",
+            "timestamp": datetime.now().isoformat()
+        }))
+        
+        # Keep connection alive and handle incoming messages
+        while True:
+            data = await websocket.receive_text()
+            message_data = json.loads(data)
+            
+            if message_data.get("type") == "ping":
+                await websocket.send_text(json.dumps({
+                    "type": "pong",
+                    "timestamp": datetime.now().isoformat()
+                }))
+            elif message_data.get("type") == "request_thinking_status":
+                # Send current thinking status
+                if consciousness:
+                    thinking_status = await get_thinking_status(conversation_id)
+                    await websocket.send_text(json.dumps({
+                        "type": "thinking_status",
+                        "data": thinking_status,
+                        "timestamp": datetime.now().isoformat()
+                    }))
+            
+    except WebSocketDisconnect:
+        websocket_manager.disconnect(connection_id, conversation_id)
+    except Exception as e:
+        logger.error(f"❌ WebSocket error: {e}")
+        websocket_manager.disconnect(connection_id, conversation_id)
+
+@app.post("/api/chat/realtime")
+async def chat_realtime(chat_data: ChatRequest):
+    """Enhanced chat endpoint with real-time WebSocket notifications"""
+    global consciousness
+    
+    if not consciousness:
+        raise HTTPException(status_code=503, detail="Consciousness not initialized")
+    
+    try:
+        # Generate conversation ID if not provided
+        conversation_id = chat_data.conversation_id or f"conv_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        # Notify WebSocket clients that thinking has started
+        await websocket_manager.send_to_conversation(conversation_id, {
+            "type": "thinking_started",
+            "message": chat_data.message,
+            "speaker": chat_data.speaker,
+            "timestamp": datetime.now().isoformat()
+        })
+        
+        # Process message with consciousness
+        response = await consciousness.process_message(
+            message=chat_data.message,
+            speaker=chat_data.speaker
+        )
+        
+        # Send semantic analysis to WebSocket clients
+        if hasattr(consciousness, 'last_semantic_analysis'):
+            await websocket_manager.send_to_conversation(conversation_id, {
+                "type": "semantic_analysis",
+                "data": {
+                    "intent": consciousness.last_semantic_analysis.primary_intent,
+                    "confidence": consciousness.last_semantic_analysis.intent_confidence,
+                    "reasoning": consciousness.last_semantic_analysis.intent_reasoning,
+                    "emotional_tone": consciousness.last_semantic_analysis.emotional_tone,
+                    "memory_required": consciousness.last_semantic_analysis.requires_memory_lookup
+                },
+                "timestamp": datetime.now().isoformat()
+            })
+        
+        # Send thinking completion notification
+        await websocket_manager.send_to_conversation(conversation_id, {
+            "type": "thinking_completed",
+            "response": response,
+            "timestamp": datetime.now().isoformat()
+        })
+        
+        return {
+            "response": response,
+            "conversation_id": conversation_id,
+            "timestamp": datetime.now().isoformat(),
+            "websocket_enabled": True
+        }
+        
+    except Exception as e:
+        # Send error notification to WebSocket clients
+        await websocket_manager.send_to_conversation(conversation_id, {
+            "type": "thinking_error",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        })
+        
+        logger.error(f"❌ Error in realtime chat: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def get_thinking_status(conversation_id: str) -> dict:
+    """Get current thinking status for a conversation"""
+    global consciousness
+    
+    if not consciousness:
+        return {"status": "consciousness_not_available"}
+    
+    # This would be expanded to track actual thinking processes
+    return {
+        "status": "ready",
+        "active_processes": [],
+        "memory_connections": await consciousness.memory_graph.get_graph_statistics() if hasattr(consciousness, 'memory_graph') else None,
+        "last_analysis": getattr(consciousness, 'last_semantic_analysis', None)
+    }
+
+@app.get("/api/consciousness/websocket/stats")
+async def get_websocket_stats():
+    """Get WebSocket connection statistics"""
+    return {
+        "active_connections": len(websocket_manager.active_connections),
+        "active_conversations": len(websocket_manager.conversation_connections),
+        "connections_by_conversation": {
+            conv_id: len(conn_ids) 
+            for conv_id, conn_ids in websocket_manager.conversation_connections.items()
+        }
+    }
 
 if __name__ == "__main__":
     import uvicorn

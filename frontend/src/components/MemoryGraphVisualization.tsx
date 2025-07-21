@@ -62,7 +62,7 @@ export default function MemoryGraphVisualization() {
   const loadMemoryGraph = async () => {
     try {
       setIsLoading(true);
-      const response = await fetch('/api/memory/graph');
+      const response = await fetch('http://localhost:8000/api/memory/graph');
       
       if (!response.ok) {
         throw new Error(`Failed to load memory graph: ${response.statusText}`);

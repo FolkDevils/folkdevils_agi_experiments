@@ -159,6 +159,9 @@ class ConsciousnessLoop:
                 identity_context=current_identity
             )
             
+            # Store for WebSocket transmission
+            self.last_semantic_analysis = semantic_analysis
+            
             # 3. Semantic memory recall based on understanding
             if semantic_analysis.requires_memory_lookup:
                 # MEMORY PATH: Recall memories based on semantic understanding
@@ -267,10 +270,16 @@ class ConsciousnessLoop:
                 confidence=semantic_analysis.intent_confidence
             )
             
-            # 8. Background memory processing based on semantic understanding
+            # 8. Background Processing (if applicable)
             if semantic_analysis.processing_needs.get('deep_memory_analysis', False):
-                asyncio.create_task(self._background_memory_processing())
-                logger.info(f"📊 Background memory processing for {semantic_analysis.primary_intent}")
+                # Start background semantic memory analysis
+                asyncio.create_task(self._background_semantic_processing(
+                    message=message,
+                    semantic_analysis=semantic_analysis,
+                    memories=relevant_memories,
+                    conversation_id=getattr(self, 'current_conversation_id', None)
+                ))
+                logger.info(f"🔄 Background semantic processing started for {semantic_analysis.primary_intent}")
             else:
                 logger.info(f"📊 Background processing not needed for {semantic_analysis.primary_intent}")
             
@@ -1418,3 +1427,58 @@ Respond naturally and appropriately based on the semantic understanding."""
             logger.info("✅ Consciousness loop shutdown complete")
         except Exception as e:
             logger.error(f"❌ Error during shutdown: {e}") 
+
+    async def _background_semantic_processing(self, message: str, semantic_analysis, memories: List[Any], conversation_id: str = None):
+        """
+        Perform background semantic processing and deliver insights when ready
+        """
+        try:
+            logger.info(f"🔄 Starting background semantic processing for: {semantic_analysis.primary_intent}")
+            
+            # Simulate background thinking processes
+            await asyncio.sleep(2)  # Allow main response to complete first
+            
+            # Deep memory analysis
+            if semantic_analysis.requires_memory_lookup and memories:
+                insights = []
+                
+                # Find deeper memory connections
+                for memory in memories[:3]:  # Process top 3 memories
+                    memory_connections = await self.memory_graph.get_memory_connections(memory.id)
+                    if memory_connections and len(memory_connections) > 2:
+                        insights.append(f"I'm connecting this to {len(memory_connections)} related memories about {getattr(memory, 'topic', 'this topic')}")
+                
+                # Generate semantic insights if we found connections
+                if insights and conversation_id:
+                    insight_message = f"💭 Follow-up insight: {' and '.join(insights[:2])}. This creates a richer understanding of your question."
+                    
+                    # Send via WebSocket if available
+                    await self._send_background_insight(conversation_id, {
+                        "type": "background_insight",
+                        "insight": insight_message,
+                        "semantic_context": {
+                            "original_intent": semantic_analysis.primary_intent,
+                            "connections_found": sum(len(await self.memory_graph.get_memory_connections(m.id)) for m in memories[:3])
+                        },
+                        "timestamp": datetime.now().isoformat()
+                    })
+            
+            logger.info(f"✨ Background semantic processing complete")
+            
+        except Exception as e:
+            logger.error(f"❌ Error in background semantic processing: {e}")
+
+    async def _send_background_insight(self, conversation_id: str, insight_data: dict):
+        """
+        Send background insight via WebSocket (placeholder for WebSocket integration)
+        """
+        try:
+            # This would integrate with the WebSocket manager
+            # For now, we'll log the insight
+            logger.info(f"💭 Background insight ready: {insight_data['insight']}")
+            
+            # In a full implementation, this would call:
+            # await websocket_manager.send_to_conversation(conversation_id, insight_data)
+            
+        except Exception as e:
+            logger.error(f"❌ Error sending background insight: {e}") 

@@ -6,6 +6,9 @@ import { clsx } from 'clsx';
 import SuggestionsPanel from '../components/SuggestionsPanel';
 import MemoryViewer from '../components/MemoryViewer';
 import MemoryGraphVisualization from '../components/MemoryGraphVisualization';
+import RealtimeChat from '../components/RealtimeChat';
+import SemanticDashboard from '../components/SemanticDashboard';
+import { Button } from '../components/ui/button';
 
 interface ChatMessage {
   id: string;
@@ -36,6 +39,8 @@ export default function ChatPage() {
   const [showMemoryViewer, setShowMemoryViewer] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [showMemoryGraph, setShowMemoryGraph] = useState(false);
+  const [showRealtimeChat, setShowRealtimeChat] = useState(false);
+  const [showSemanticDashboard, setShowSemanticDashboard] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -414,6 +419,42 @@ export default function ChatPage() {
             <div className="p-4">
               <MemoryGraphVisualization />
             </div>
+          </div>
+        )}
+
+        {/* Dashboard Toggle */}
+        <div className="flex gap-4 mb-6">
+          <Button
+            onClick={() => setShowSemanticDashboard(!showSemanticDashboard)}
+            variant="outline"
+            className="flex items-center gap-2"
+          >
+            📊 {showSemanticDashboard ? 'Hide' : 'Show'} Semantic Dashboard
+          </Button>
+        </div>
+
+        {/* Semantic Dashboard */}
+        {showSemanticDashboard && (
+          <div className="mb-8">
+            <SemanticDashboard />
+          </div>
+        )}
+
+        {/* Real-time Chat Toggle */}
+        <div className="flex gap-4 mb-6">
+          <Button
+            onClick={() => setShowRealtimeChat(!showRealtimeChat)}
+            variant="outline"
+            className="flex items-center gap-2"
+          >
+            🚀 {showRealtimeChat ? 'Hide' : 'Show'} Real-time Chat
+          </Button>
+        </div>
+
+        {/* Real-time Chat Component */}
+        {showRealtimeChat && (
+          <div className="mb-8">
+            <RealtimeChat />
           </div>
         )}
       </div>
