@@ -782,7 +782,7 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
         websocket_manager.disconnect(connection_id, conversation_id)
 
 @app.post("/api/chat/realtime")
-async def chat_realtime(chat_data: ChatRequest):
+async def chat_realtime(chat_data: ChatMessage):
     """Enhanced chat endpoint with real-time WebSocket notifications"""
     global consciousness
     

@@ -23,7 +23,7 @@ def test_connection():
         print("🔑 WEAVIATE_API_KEY not found in environment.")
         api_key = getpass.getpass("Please enter your Weaviate API key: ")
         
-    cluster_url = "https://wl77wkhsdm3ypg79wqcq.c0.us-west3.gcp.weaviate.cloud"
+    cluster_url = os.getenv('WEAVIATE_URL', "https://qjqqrfhsko9ezg6ekula.c0.us-west3.gcp.weaviate.cloud")
         
     try:
         # Connect to my brain

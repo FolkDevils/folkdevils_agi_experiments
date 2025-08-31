@@ -49,7 +49,7 @@ class LongTermMemory:
     
     def __init__(self):
         self.client = None
-        self.cluster_url = "https://wl77wkhsdm3ypg79wqcq.c0.us-west3.gcp.weaviate.cloud"
+        self.cluster_url = os.getenv('WEAVIATE_URL', "https://qjqqrfhsko9ezg6ekula.c0.us-west3.gcp.weaviate.cloud")
         self._connect()
         self._ensure_collections()
     
