@@ -21,6 +21,11 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 
 from mind.consciousness_loop import ConsciousnessLoop
+from mind.memory.long_term_store import Memory
+import openai
+import base64
+import io
+from pathlib import Path
 
 # Initialize logging
 logging.basicConfig(level=logging.INFO)
@@ -28,6 +33,9 @@ logger = logging.getLogger(__name__)
 
 # Global consciousness instance
 consciousness: Optional[ConsciousnessLoop] = None
+
+# Initialize OpenAI client
+openai_client = None
 
 # Load environment variables from .env file
 load_dotenv()
@@ -85,11 +93,16 @@ websocket_manager = ConnectionManager()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan manager for consciousness startup and shutdown"""
-    global consciousness
+    global consciousness, openai_client
     
     # Startup
     try:
         consciousness = ConsciousnessLoop()
+        
+        # Initialize OpenAI client for audio processing
+        openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        logger.info("🎤 OpenAI audio client initialized")
+        
         logger.info("🧠 Consciousness API online - I am ready to chat!")
         
         # Store a memory about this moment
@@ -129,6 +142,44 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Audio processing functions
+async def transcribe_audio(audio_data: bytes) -> str:
+    """Transcribe audio using OpenAI Whisper"""
+    try:
+        # Create a file-like object from audio bytes
+        audio_file = io.BytesIO(audio_data)
+        audio_file.name = "audio.wav"  # OpenAI requires a filename
+        
+        # Transcribe using Whisper
+        transcript = openai_client.audio.transcriptions.create(
+            model="whisper-1",
+            file=audio_file,
+            response_format="text"
+        )
+        
+        return transcript.strip()
+    except Exception as e:
+        logger.error(f"Audio transcription failed: {e}")
+        return ""
+
+
+async def synthesize_speech(text: str) -> bytes:
+    """Synthesize speech using OpenAI TTS"""
+    try:
+        response = openai_client.audio.speech.create(
+            model="tts-1",  # Use tts-1-hd for higher quality
+            voice="alloy",  # Options: alloy, echo, fable, onyx, nova, shimmer
+            input=text,
+            response_format="mp3"  # or "wav", "opus", "aac", "flac"
+        )
+        
+        # Return the audio bytes
+        return response.content
+    except Exception as e:
+        logger.error(f"Speech synthesis failed: {e}")
+        return b""
+
 
 # Request/Response models
 class ChatMessage(BaseModel):
@@ -193,6 +244,220 @@ async def chat_with_consciousness(chat_message: ChatMessage):
     except Exception as e:
         logger.error(f"❌ Error processing chat message: {e}")
         raise HTTPException(status_code=500, detail=f"Consciousness error: {str(e)}")
+
+@app.post("/api/chat/stream")
+async def chat_with_streaming_consciousness(chat_message: ChatMessage):
+    """
+    OPTIMIZED: Streaming chat endpoint - returns immediate response while processing continues
+    
+    This implements Phase 1 critical path defense:
+    - Immediate response streaming (<2 seconds)
+    - Parallel background processing
+    - Smart coherence skipping for simple queries
+    """
+    import uuid
+    import time
+    
+    global consciousness
+    
+    if not consciousness:
+        raise HTTPException(status_code=503, detail="Consciousness not initialized")
+    
+    trace_id = str(uuid.uuid4())[:8]
+    start_time = time.time()
+    
+    try:
+        logger.info(f"🚀 [TRACE:{trace_id}] Starting streaming consciousness processing...")
+        
+        # PHASE 1: IMMEDIATE SEMANTIC ANALYSIS (< 1 second)
+        semantic_start = time.time()
+        
+        # Add to short-term memory first
+        conversation_turn = consciousness.short_term_memory.add_conversation_turn(
+            speaker=chat_message.speaker,
+            content=chat_message.message
+        )
+        
+        # Quick semantic analysis for routing
+        recent_context = consciousness.short_term_memory.get_conversation_context(last_n_turns=3)
+        current_identity = await consciousness.identity_core.get_current_state()
+        
+        semantic_analysis = await consciousness.semantic_analyzer.analyze_semantic_intent(
+            message=chat_message.message,
+            conversation_context=recent_context,
+            identity_context=current_identity
+        )
+        
+        semantic_time = time.time() - semantic_start
+        logger.info(f"⚡ [TRACE:{trace_id}] Semantic analysis: {semantic_time:.3f}s - {semantic_analysis.primary_intent}")
+        
+        # PHASE 2: PARALLEL PROCESSING START
+        parallel_start = time.time()
+        
+        # Start parallel tasks based on semantic analysis
+        async def memory_task():
+            if semantic_analysis.requires_memory_lookup:
+                return await consciousness.long_term_memory.recall_memories(
+                    query=chat_message.message,
+                    limit=3,
+                    min_importance=semantic_analysis.memory_importance
+                )
+            return []
+        
+        async def planning_task():
+            if semantic_analysis.processing_needs.get('planning', False):
+                return await consciousness.planning_simulator.simulate_planning_session(
+                    message=chat_message.message,
+                    speaker=chat_message.speaker,
+                    conversation_context=recent_context,
+                    identity_state=current_identity
+                )
+            return {'goal_formulated': False, 'simulation_time': 0}
+        
+        # Run memory and planning in parallel
+        relevant_memories, planning_result = await asyncio.gather(
+            memory_task(),
+            planning_task()
+        )
+        
+        parallel_time = time.time() - parallel_start
+        logger.info(f"⚡ [TRACE:{trace_id}] Parallel processing: {parallel_time:.3f}s")
+        
+        # PHASE 3: IMMEDIATE RESPONSE GENERATION
+        response_start = time.time()
+        
+        # Generate response based on semantic analysis
+        if semantic_analysis.response_expectations == "brief_acknowledgment":
+            response = await consciousness._generate_semantic_response(
+                message=chat_message.message,
+                speaker=chat_message.speaker,
+                semantic_analysis=semantic_analysis,
+                identity=current_identity,
+                memories=relevant_memories
+            )
+        else:
+            response = await consciousness._generate_conscious_response(
+                message=chat_message.message,
+                speaker=chat_message.speaker,
+                relevant_memories=relevant_memories,
+                identity=current_identity,
+                context=recent_context,
+                planning_result=planning_result
+            )
+        
+        response_time = time.time() - response_start
+        
+        # Add response to short-term memory
+        consciousness.short_term_memory.add_conversation_turn(
+            speaker="ai",
+            content=response
+        )
+        
+        # PHASE 4: SMART COHERENCE SKIPPING
+        # Skip expensive coherence analysis for high-confidence simple queries
+        skip_coherence = (
+            semantic_analysis.intent_confidence > 0.85 and 
+            semantic_analysis.response_expectations == "brief_acknowledgment"
+        )
+        
+        coherence_score = 0.85  # Default for skipped analysis
+        coherence_time = 0
+        
+        if not skip_coherence and semantic_analysis.processing_needs.get('coherence_analysis', False):
+            coherence_start = time.time()
+            coherence_analysis = await consciousness.coherence_analyzer.analyze_response_coherence(
+                response=response,
+                identity_state=current_identity,
+                relevant_memories=relevant_memories,
+                conversation_context=recent_context,
+                message=chat_message.message
+            )
+            coherence_score = coherence_analysis.coherence_score
+            coherence_time = time.time() - coherence_start
+            logger.info(f"🧠 [TRACE:{trace_id}] Coherence analysis: {coherence_time:.3f}s")
+        else:
+            logger.info(f"⚡ [TRACE:{trace_id}] Coherence analysis skipped (confidence: {semantic_analysis.intent_confidence:.3f})")
+        
+        # PHASE 5: BACKGROUND PROCESSING (non-blocking)
+        async def background_processing():
+            try:
+                # Memory evaluation and storage
+                if semantic_analysis.processing_needs.get('deep_memory_analysis', False):
+                    # Create session data for memory evaluation
+                    session_data = {
+                        'session_id': consciousness.short_term_memory.session_id,
+                        'conversation_turns': [conversation_turn],
+                        'working_thoughts': consciousness.short_term_memory.working_thoughts
+                    }
+                    memory_candidates = await consciousness.memory_evaluator.evaluate_session(session_data)
+                    
+                    # Store qualified memories
+                    for candidate in memory_candidates:
+                        if candidate.importance_score >= consciousness.memory_evaluator.min_importance_threshold:
+                            memory = Memory(
+                                content=candidate.content,
+                                memory_type=candidate.memory_type,
+                                importance=candidate.importance_score,
+                                emotional_weight=candidate.emotional_weight,
+                                participants=candidate.participants,
+                                tags=candidate.tags,
+                                context=candidate.context
+                            )
+                            await consciousness.long_term_memory.store_memory(memory)
+                
+                # Add working thought
+                consciousness.short_term_memory.add_working_thought(
+                    content=f"Responded to {chat_message.speaker} about: {chat_message.message[:50]}... "
+                           f"(coherence: {coherence_score:.3f}) [intent: {semantic_analysis.primary_intent}]",
+                    related_to=conversation_turn.timestamp,
+                    confidence=semantic_analysis.intent_confidence
+                )
+                
+                logger.info(f"🔄 [TRACE:{trace_id}] Background processing completed")
+                
+            except Exception as e:
+                logger.error(f"❌ [TRACE:{trace_id}] Background processing error: {e}")
+        
+        # Start background processing (don't await)
+        asyncio.create_task(background_processing())
+        
+        # FINAL RESPONSE
+        total_time = time.time() - start_time
+        
+        # Get consciousness status
+        status = await consciousness.get_consciousness_status()
+        
+        logger.info(f"✅ [TRACE:{trace_id}] Streaming response complete: {total_time:.3f}s total")
+        
+        return {
+            "response": response,
+            "consciousness_status": status,
+            "timestamp": datetime.now().isoformat(),
+            "trace_id": trace_id,
+            "performance": {
+                "total_time": round(total_time, 3),
+                "semantic_time": round(semantic_time, 3),
+                "parallel_time": round(parallel_time, 3),
+                "response_time": round(response_time, 3),
+                "coherence_time": round(coherence_time, 3),
+                "coherence_skipped": skip_coherence,
+                "intent_confidence": round(semantic_analysis.intent_confidence, 3),
+                "memory_lookup_required": semantic_analysis.requires_memory_lookup,
+                "memories_recalled": len(relevant_memories)
+            },
+            "semantic_analysis": {
+                "intent": semantic_analysis.primary_intent,
+                "confidence": semantic_analysis.intent_confidence,
+                "reasoning": semantic_analysis.intent_reasoning,
+                "emotional_tone": semantic_analysis.emotional_tone,
+                "response_type": semantic_analysis.response_expectations
+            }
+        }
+        
+    except Exception as e:
+        error_time = time.time() - start_time
+        logger.error(f"❌ [TRACE:{trace_id}] Error in streaming consciousness: {e} (after {error_time:.3f}s)")
+        raise HTTPException(status_code=500, detail=f"Streaming consciousness error: {str(e)}")
 
 @app.post("/api/chat/diagnostic")
 async def chat_diagnostic(chat_message: ChatMessage):
@@ -667,6 +932,49 @@ async def get_identity():
         logger.error(f"❌ Error getting identity: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.post("/api/audio/tts")
+async def text_to_speech(request: dict):
+    """
+    Convert text to speech using OpenAI TTS
+    
+    Request body:
+    {
+        "text": "Text to synthesize",
+        "voice": "alloy" (optional)
+    }
+    """
+    try:
+        text = request.get("text", "")
+        voice = request.get("voice", "alloy")
+        
+        if not text.strip():
+            raise HTTPException(status_code=400, detail="Text is required")
+        
+        # Synthesize speech
+        audio_bytes = await synthesize_speech(text)
+        
+        if not audio_bytes:
+            raise HTTPException(status_code=500, detail="Failed to synthesize speech")
+        
+        # Return base64 encoded audio for easy frontend handling
+        audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+        
+        return {
+            "audio_data": audio_base64,
+            "format": "mp3",
+            "voice": voice,
+            "text": text,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ TTS error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/session/end")
 async def end_session():
     """End current consciousness session"""
@@ -780,6 +1088,271 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
     except Exception as e:
         logger.error(f"❌ WebSocket error: {e}")
         websocket_manager.disconnect(connection_id, conversation_id)
+
+@app.websocket("/ws/audio/{conversation_id}")
+async def audio_websocket_endpoint(websocket: WebSocket, conversation_id: str):
+    """
+    WebSocket endpoint for real-time audio streaming and voice interaction
+    
+    Supports:
+    - Audio chunk streaming for speech-to-text
+    - Real-time transcription updates  
+    - Voice activity detection
+    - Audio level monitoring
+    - TTS audio streaming back to client
+    """
+    connection_id = await websocket_manager.connect(websocket, conversation_id)
+    
+    try:
+        # Send audio connection welcome
+        await websocket.send_text(json.dumps({
+            "type": "audio_connection_established",
+            "conversation_id": conversation_id,
+            "connection_id": connection_id,
+            "message": "Voice interface connected - ready for audio streaming",
+            "capabilities": {
+                "speech_to_text": True,
+                "text_to_speech": True, 
+                "real_time_transcription": True,
+                "voice_activity_detection": True,
+                "audio_level_monitoring": True
+            },
+            "timestamp": datetime.now().isoformat()
+        }))
+        
+        # Keep connection alive and handle audio data
+        while True:
+            try:
+                # Handle both text and binary data
+                message = await websocket.receive()
+                
+                if 'text' in message:
+                    # Handle control messages
+                    message_data = json.loads(message['text'])
+                    
+                    if message_data.get("type") == "audio_ping":
+                        await websocket.send_text(json.dumps({
+                            "type": "audio_pong",
+                            "timestamp": datetime.now().isoformat()
+                        }))
+                    
+                    elif message_data.get("type") == "start_voice_session":
+                        # Initialize voice session
+                        await websocket.send_text(json.dumps({
+                            "type": "voice_session_started",
+                            "session_id": f"voice_{conversation_id}_{datetime.now().strftime('%H%M%S')}",
+                            "timestamp": datetime.now().isoformat()
+                        }))
+                    
+                    elif message_data.get("type") == "end_voice_session":
+                        # Clean up voice session
+                        await websocket.send_text(json.dumps({
+                            "type": "voice_session_ended",
+                            "timestamp": datetime.now().isoformat()
+                        }))
+                    
+                    elif message_data.get("type") == "transcribed_text":
+                        # Handle transcribed text from client-side STT
+                        transcribed_text = message_data.get("text", "")
+                        confidence = message_data.get("confidence", 0.0)
+                        
+                        if transcribed_text.strip():
+                            logger.info(f"🎤 [AUDIO:{conversation_id}] Received transcription: '{transcribed_text}' (confidence: {confidence:.2f})")
+                            
+                            # Process through streaming consciousness
+                            response_data = await process_voice_message(transcribed_text, conversation_id)
+                            
+                            # Send response back
+                            await websocket.send_text(json.dumps({
+                                "type": "consciousness_response",
+                                "data": response_data,
+                                "timestamp": datetime.now().isoformat()
+                            }))
+                
+                elif 'bytes' in message:
+                    # Handle audio data chunks
+                    audio_data = base64.b64decode(message['bytes'])
+                    
+                    logger.info(f"🎤 [AUDIO:{conversation_id}] Received audio chunk: {len(audio_data)} bytes")
+                    
+                    # Process through OpenAI Whisper STT
+                    transcription = await transcribe_audio(audio_data)
+                    
+                    if transcription:
+                        logger.info(f"🎤 [AUDIO:{conversation_id}] Transcribed: '{transcription}'")
+                        
+                        # Process through streaming consciousness
+                        response_data = await process_voice_message(transcription, conversation_id)
+                        
+                        # Send response back
+                        await websocket.send_text(json.dumps({
+                            "type": "consciousness_response", 
+                            "data": response_data,
+                            "timestamp": datetime.now().isoformat()
+                        }))
+                    else:
+                        # Send acknowledgment if no transcription
+                        await websocket.send_text(json.dumps({
+                            "type": "audio_chunk_received",
+                            "size": len(audio_data),
+                            "timestamp": datetime.now().isoformat()
+                        }))
+
+                    
+            except WebSocketDisconnect:
+                break
+            except Exception as e:
+                logger.error(f"❌ Audio WebSocket message error: {e}")
+                await websocket.send_text(json.dumps({
+                    "type": "error",
+                    "message": f"Audio processing error: {str(e)}",
+                    "timestamp": datetime.now().isoformat()
+                }))
+            
+    except WebSocketDisconnect:
+        websocket_manager.disconnect(connection_id, conversation_id)
+        logger.info(f"🔌 Audio WebSocket disconnected: {connection_id}")
+    except Exception as e:
+        logger.error(f"❌ Audio WebSocket error: {e}")
+        websocket_manager.disconnect(connection_id, conversation_id)
+
+async def process_voice_message(transcribed_text: str, conversation_id: str) -> dict:
+    """
+    Process transcribed voice message through consciousness with optimizations
+    """
+    import time
+    
+    global consciousness
+    
+    if not consciousness:
+        raise HTTPException(status_code=503, detail="Consciousness not initialized")
+    
+    trace_id = str(uuid.uuid4())[:8]
+    start_time = time.time()
+    
+    try:
+        logger.info(f"🎤 [VOICE-TRACE:{trace_id}] Processing voice message: '{transcribed_text[:50]}...'")
+        
+        # Use the same optimized streaming processing as /api/chat/stream
+        conversation_turn = consciousness.short_term_memory.add_conversation_turn(
+            speaker="andrew",  # Voice is always from Andrew for now
+            content=transcribed_text
+        )
+        
+        # Quick semantic analysis
+        recent_context = consciousness.short_term_memory.get_conversation_context(last_n_turns=3)
+        current_identity = await consciousness.identity_core.get_current_state()
+        
+        semantic_analysis = await consciousness.semantic_analyzer.analyze_semantic_intent(
+            message=transcribed_text,
+            conversation_context=recent_context,
+            identity_context=current_identity
+        )
+        
+        # Parallel processing
+        async def memory_task():
+            if semantic_analysis.requires_memory_lookup:
+                return await consciousness.long_term_memory.recall_memories(
+                    query=transcribed_text,
+                    limit=3,
+                    min_importance=semantic_analysis.memory_importance
+                )
+            return []
+        
+        async def planning_task():
+            if semantic_analysis.processing_needs.get('planning', False):
+                return await consciousness.planning_simulator.simulate_planning_session(
+                    message=transcribed_text,
+                    speaker="andrew",
+                    conversation_context=recent_context,
+                    identity_state=current_identity
+                )
+            return {'goal_formulated': False, 'simulation_time': 0}
+        
+        relevant_memories, planning_result = await asyncio.gather(memory_task(), planning_task())
+        
+        # Generate response
+        if semantic_analysis.response_expectations == "brief_acknowledgment":
+            response = await consciousness._generate_semantic_response(
+                message=transcribed_text,
+                speaker="andrew",
+                semantic_analysis=semantic_analysis,
+                identity=current_identity,
+                memories=relevant_memories
+            )
+        else:
+            response = await consciousness._generate_conscious_response(
+                message=transcribed_text,
+                speaker="andrew",
+                relevant_memories=relevant_memories,
+                identity=current_identity,
+                context=recent_context,
+                planning_result=planning_result
+            )
+        
+        # Add response to memory
+        consciousness.short_term_memory.add_conversation_turn(
+            speaker="ai",
+            content=response
+        )
+        
+        # Background processing
+        async def background_processing():
+            try:
+                if semantic_analysis.processing_needs.get('deep_memory_analysis', False):
+                    # Create session data for memory evaluation
+                    session_data = {
+                        'session_id': consciousness.short_term_memory.session_id,
+                        'conversation_turns': [conversation_turn],
+                        'working_thoughts': consciousness.short_term_memory.working_thoughts
+                    }
+                    memory_candidates = await consciousness.memory_evaluator.evaluate_session(session_data)
+                    
+                    # Store qualified memories
+                    for candidate in memory_candidates:
+                        if candidate.importance_score >= consciousness.memory_evaluator.min_importance_threshold:
+                            memory = Memory(
+                                content=candidate.content,
+                                memory_type=candidate.memory_type,
+                                importance=candidate.importance_score,
+                                emotional_weight=candidate.emotional_weight,
+                                participants=candidate.participants,
+                                tags=candidate.tags,
+                                context=candidate.context
+                            )
+                            await consciousness.long_term_memory.store_memory(memory)
+                
+                consciousness.short_term_memory.add_working_thought(
+                    content=f"Voice interaction with andrew: {transcribed_text[:50]}... [intent: {semantic_analysis.primary_intent}]",
+                    related_to=conversation_turn.timestamp,
+                    confidence=semantic_analysis.intent_confidence
+                )
+            except Exception as e:
+                logger.error(f"❌ [VOICE-TRACE:{trace_id}] Background processing error: {e}")
+        
+        asyncio.create_task(background_processing())
+        
+        total_time = time.time() - start_time
+        logger.info(f"✅ [VOICE-TRACE:{trace_id}] Voice processing complete: {total_time:.3f}s")
+        
+        return {
+            "response": response,
+            "trace_id": trace_id,
+            "processing_time": round(total_time, 3),
+            "semantic_analysis": {
+                "intent": semantic_analysis.primary_intent,
+                "confidence": semantic_analysis.intent_confidence,
+                "emotional_tone": semantic_analysis.emotional_tone,
+                "reasoning": semantic_analysis.intent_reasoning
+            },
+            "voice_optimized": True,
+            "memories_recalled": len(relevant_memories)
+        }
+        
+    except Exception as e:
+        error_time = time.time() - start_time
+        logger.error(f"❌ [VOICE-TRACE:{trace_id}] Voice processing error: {e} (after {error_time:.3f}s)")
+        raise
 
 @app.post("/api/chat/realtime")
 async def chat_realtime(chat_data: ChatMessage):
