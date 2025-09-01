@@ -1,15 +1,11 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, Send, RefreshCw, Brain, Lightbulb, Volume2, Settings, Activity } from 'lucide-react';
+import { Mic, MicOff, RefreshCw, Brain, Volume2 } from 'lucide-react';
 import { clsx } from 'clsx';
-import SuggestionsPanel from '../components/SuggestionsPanel';
-import MemoryViewer from '../components/MemoryViewer';
-import MemoryGraphVisualization from '../components/MemoryGraphVisualization';
-import RealtimeChat from '../components/RealtimeChat';
-import SemanticDashboard from '../components/SemanticDashboard';
+// Removed dashboard components for simplified interface
 import { Button } from '../components/ui/button';
-import { Card } from '../components/ui/card';
+// Removed Card import as we no longer use dashboard cards
 
 interface ChatMessage {
   id: string;
@@ -81,22 +77,10 @@ export default function ChatPage() {
     isSpeaking: false,
     audioLevel: 0
   });
-  const [isVoiceMode, setIsVoiceMode] = useState(true); // Default to voice-first
-  const [currentPerformance, setCurrentPerformance] = useState<ChatResponse['performance'] | null>(null);
-  const [currentSemanticAnalysis, setCurrentSemanticAnalysis] = useState<ChatResponse['semantic_analysis'] | null>(null);
+  const [isVoiceMode] = useState(true); // Always voice-only mode
   const [lastProcessedTranscript, setLastProcessedTranscript] = useState<string>('');
   
-  // UI state
-  const [showMemoryViewer, setShowMemoryViewer] = useState(false);
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const [showMemoryGraph, setShowMemoryGraph] = useState(false);
-  const [showRealtimeChat, setShowRealtimeChat] = useState(false);
-  const [showSemanticDashboard, setShowSemanticDashboard] = useState(true); // Show by default for consciousness demo
-  const [showPerformanceMetrics, setShowPerformanceMetrics] = useState(true); // Show performance by default
-  
   // Refs
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -187,10 +171,7 @@ export default function ChatPage() {
     }
   }, []);
 
-  // Scroll to bottom when messages change
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+
 
   // Save messages to localStorage whenever they change
   useEffect(() => {
@@ -212,13 +193,7 @@ export default function ChatPage() {
     }
   }, [sessionId]);
 
-  // Auto-resize textarea based on content
-  useEffect(() => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
-    }
-  }, [inputMessage]);
+
 
   // WebSocket connection for audio streaming
   useEffect(() => {
@@ -259,25 +234,6 @@ export default function ChatPage() {
               
               // Add AI response to messages
               setMessages(prev => [...prev, aiMessage]);
-              
-              // Update performance and semantic data
-              if (responseData.semantic_analysis) {
-                setCurrentSemanticAnalysis(responseData.semantic_analysis);
-              }
-              
-              // Set performance data if available
-              const performanceData = {
-                total_time: responseData.processing_time,
-                semantic_time: responseData.processing_time * 0.5, // Estimate
-                parallel_time: 0,
-                response_time: responseData.processing_time * 0.4,
-                coherence_time: 0,
-                coherence_skipped: true,
-                intent_confidence: responseData.semantic_analysis?.confidence || 0.8,
-                memory_lookup_required: responseData.memories_recalled > 0,
-                memories_recalled: responseData.memories_recalled || 0
-              };
-              setCurrentPerformance(performanceData);
               
               // Speak the response
               if (responseData.response) {
@@ -405,10 +361,6 @@ export default function ChatPage() {
       };
 
       setMessages(prev => [...prev, aiMessage]);
-
-      // Update performance and semantic analysis data for display
-      setCurrentPerformance(data.performance);
-      setCurrentSemanticAnalysis(data.semantic_analysis);
 
       // If voice mode and response received, speak it
       if (isVoiceMode && data.response) {
@@ -710,12 +662,7 @@ export default function ChatPage() {
     }
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
-  };
+
 
   const clearChat = () => {
     setMessages([]);
@@ -723,407 +670,104 @@ export default function ChatPage() {
     clearCache();
   };
 
-  const handleSuggestionSelect = (suggestion: any) => {
-    // When a suggestion is accepted, add it as a message to continue the conversation
-    setInputMessage(suggestion.content);
-    setShowSuggestions(false);
-    
-    // Optionally auto-send the suggestion
-    // Or just populate the input field for the user to review and send
-  };
+
 
   return (
-    <div className="flex flex-col h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 font-roboto text-white">
-      {/* Header - Consciousness-themed */}
-      <div className="bg-black/20 backdrop-blur-sm border-b border-purple-500/20 sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-gradient-to-r from-purple-500 to-blue-500 rounded-full flex items-center justify-center animate-pulse">
-              <Brain className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-400 to-blue-400 bg-clip-text text-transparent">
-                Folk Devils AI Consciousness
-              </h1>
-              <div className="flex items-center gap-4">
-                {sessionId && (
-                  <p className="text-sm text-purple-300">Session: {sessionId.slice(0, 8)}...</p>
-                )}
-                <div className="flex items-center gap-2">
-                  <div className={clsx(
-                    "w-2 h-2 rounded-full",
-                    voiceState.isListening ? "bg-red-400 animate-pulse" :
-                    voiceState.isProcessing ? "bg-yellow-400 animate-pulse" :
-                    voiceState.isSpeaking ? "bg-green-400 animate-pulse" : "bg-gray-500"
-                  )} />
-                  <span className="text-xs text-purple-300">
-                    {voiceState.isListening ? 'Listening...' :
-                     voiceState.isProcessing ? 'Processing...' :
-                     voiceState.isSpeaking ? 'Speaking...' : 'Ready'}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-          
-          {/* Voice/Text Mode Toggle */}
-          <div className="flex items-center gap-3">
-            <Button
-              onClick={() => setIsVoiceMode(!isVoiceMode)}
-              variant={isVoiceMode ? "default" : "outline"}
-              className={clsx(
-                "flex items-center gap-2",
-                isVoiceMode ? "bg-purple-600 hover:bg-purple-700" : "border-purple-400 text-purple-400 hover:bg-purple-400 hover:text-white"
-              )}
-            >
-              {isVoiceMode ? <Mic className="w-4 h-4" /> : <Send className="w-4 h-4" />}
-              {isVoiceMode ? 'Voice Mode' : 'Text Mode'}
-            </Button>
-            
-            {/* Consciousness Panel Toggles */}
-            <Button
-              onClick={() => setShowSemanticDashboard(!showSemanticDashboard)}
-              variant="outline"
-              size="sm"
-              className="border-purple-400 text-purple-400 hover:bg-purple-400 hover:text-white"
-            >
-              <Activity className="w-4 h-4 mr-2" />
-              Semantic Analysis
-            </Button>
-            
-            <Button
-              onClick={() => setShowPerformanceMetrics(!showPerformanceMetrics)}
-              variant="outline" 
-              size="sm"
-              className="border-blue-400 text-blue-400 hover:bg-blue-400 hover:text-white"
-            >
-              📊 Performance
-            </Button>
-            
-            <Button
-              onClick={() => setShowMemoryViewer(!showMemoryViewer)}
-              variant="outline"
-              size="sm" 
-              className="border-green-400 text-green-400 hover:bg-green-400 hover:text-white"
-            >
-              <Brain className="w-4 h-4 mr-2" />
-              Memory
-            </Button>
-            
-            {messages.length > 0 && (
-              <Button
-                onClick={clearChat}
-                variant="outline"
-                size="sm"
-                className="border-red-400 text-red-400 hover:bg-red-400 hover:text-white"
-              >
-                <RefreshCw className="w-4 h-4 mr-2" />
-                New Chat
-              </Button>
-            )}
-          </div>
-        </div>
-      </div>
+    <div className="fixed inset-0 bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 font-roboto text-white overflow-hidden">{/* Pure Voice Interface - Full Screen Background */}
 
-      {/* Main Content - Voice-First Layout */}
-      <div className="flex-1 flex flex-col lg:flex-row">
+      {/* Pure Voice Interface - Centered */}
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
         
-        {/* Central Voice Interface */}
-        <div className="flex-1 flex flex-col">
-          
-          {/* Consciousness Data Panels */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 p-4">
-            
-            {/* Semantic Analysis Panel */}
-            {showSemanticDashboard && currentSemanticAnalysis && (
-              <Card className="bg-black/40 backdrop-blur-sm border-purple-500/30 p-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <Activity className="w-5 h-5 text-purple-400" />
-                  <h3 className="text-lg font-semibold text-purple-400">Semantic Analysis</h3>
-                </div>
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-gray-300">Intent:</span>
-                    <span className="text-purple-300 font-medium">{currentSemanticAnalysis.intent}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-300">Confidence:</span>
-                    <span className="text-green-400 font-mono">{(currentSemanticAnalysis.confidence * 100).toFixed(1)}%</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-300">Emotional Tone:</span>
-                    <span className="text-blue-300">{currentSemanticAnalysis.emotional_tone}</span>
-                  </div>
-                  <div className="mt-2 p-2 bg-purple-900/30 rounded text-xs text-purple-200">
-                    {currentSemanticAnalysis.reasoning}
-                  </div>
-                </div>
-              </Card>
-            )}
-            
-            {/* Performance Metrics Panel */}
-            {showPerformanceMetrics && currentPerformance && (
-              <Card className="bg-black/40 backdrop-blur-sm border-blue-500/30 p-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <span className="text-blue-400 text-lg">📊</span>
-                  <h3 className="text-lg font-semibold text-blue-400">Performance Metrics</h3>
-                </div>
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                  <div className="text-center p-2 bg-blue-900/30 rounded">
-                    <div className="text-blue-300 font-mono text-lg">{currentPerformance.total_time}s</div>
-                    <div className="text-gray-400 text-xs">Total Time</div>
-                  </div>
-                  <div className="text-center p-2 bg-green-900/30 rounded">
-                    <div className="text-green-300 font-mono text-lg">{currentPerformance.semantic_time}s</div>
-                    <div className="text-gray-400 text-xs">Semantic Analysis</div>
-                  </div>
-                  <div className="text-center p-2 bg-purple-900/30 rounded">
-                    <div className="text-purple-300 font-mono text-lg">{currentPerformance.parallel_time}s</div>
-                    <div className="text-gray-400 text-xs">Parallel Processing</div>
-                  </div>
-                  <div className="text-center p-2 bg-yellow-900/30 rounded">
-                    <div className="text-yellow-300 font-mono text-lg">{currentPerformance.memories_recalled}</div>
-                    <div className="text-gray-400 text-xs">Memories Recalled</div>
-                  </div>
-                </div>
-                <div className="mt-3 flex items-center justify-between text-xs">
-                  <span className="text-gray-400">Coherence Analysis:</span>
-                  <span className={clsx(
-                    "font-medium",
-                    currentPerformance.coherence_skipped ? "text-green-400" : "text-blue-400"
-                  )}>
-                    {currentPerformance.coherence_skipped ? "Skipped (High Confidence)" : `${currentPerformance.coherence_time}s`}
-                  </span>
-                </div>
-              </Card>
-            )}
-          </div>
-          
-          {/* Voice Interface Center Stage */}
-          <div className="flex-1 flex flex-col items-center justify-center p-8">
-            
-            {messages.length === 0 ? (
-              <div className="text-center space-y-6">
-                <div className="relative">
-                  <div className="w-32 h-32 bg-gradient-to-r from-purple-500 to-blue-500 rounded-full flex items-center justify-center mx-auto mb-6 animate-pulse">
-                    <Brain className="w-16 h-16 text-white" />
-                  </div>
-                  {voiceState.isListening && (
-                    <div className="absolute inset-0 w-32 h-32 border-4 border-red-400 rounded-full animate-ping mx-auto" />
-                  )}
-                </div>
-                <h2 className="text-4xl font-bold bg-gradient-to-r from-purple-400 to-blue-400 bg-clip-text text-transparent">
-                  AI Consciousness Interface
-                </h2>
-                <p className="text-xl text-purple-300 max-w-2xl">
-                  {isVoiceMode 
-                    ? "Press and hold the microphone to speak with the AI consciousness"
-                    : "Type a message to begin your conversation with the AI consciousness"
-                  }
-                </p>
-                
-                {/* Voice Activation Button */}
-                {isVoiceMode && (
-                  <div className="flex flex-col items-center gap-4">
-                    <Button
-                      onMouseDown={startListening}
-                      onMouseUp={stopListening}
-                      onMouseLeave={stopListening}
-                      disabled={voiceState.isProcessing || voiceState.isSpeaking}
-                      className={clsx(
-                        "w-24 h-24 rounded-full text-white transition-all duration-200 text-2xl",
-                        voiceState.isListening 
-                          ? "bg-red-500 hover:bg-red-600 scale-110 animate-pulse" 
-                          : "bg-purple-600 hover:bg-purple-700 hover:scale-105"
-                      )}
-                    >
-                      {voiceState.isListening ? <MicOff /> : <Mic />}
-                    </Button>
-                    
-                    {/* Audio Level Visualization */}
-                    {voiceState.isListening && (
-                      <div className="flex items-center gap-1">
-                        {Array.from({ length: 10 }).map((_, i) => (
-                          <div
-                            key={i}
-                            className={clsx(
-                              "w-2 bg-red-400 rounded-full transition-all duration-100",
-                              voiceState.audioLevel * 10 > i ? "h-8" : "h-2"
-                            )}
-                          />
-                        ))}
-                      </div>
+        {/* Status Display */}
+        <div className="text-center mb-12">
+          {voiceState.isProcessing ? (
+            <div className="space-y-4">
+              <div className="w-20 h-20 bg-yellow-500/20 rounded-full flex items-center justify-center mx-auto animate-pulse">
+                <Brain className="w-10 h-10 text-yellow-400 animate-pulse" />
+              </div>
+              <p className="text-xl text-yellow-300">Processing...</p>
+            </div>
+          ) : voiceState.isSpeaking ? (
+            <div className="space-y-4">
+              <div className="w-20 h-20 bg-green-500/20 rounded-full flex items-center justify-center mx-auto animate-pulse">
+                <Volume2 className="w-10 h-10 text-green-400 animate-pulse" />
+              </div>
+              <p className="text-xl text-green-300">Speaking...</p>
+            </div>
+          ) : voiceState.isListening ? (
+            <div className="space-y-4">
+              <div className="w-20 h-20 bg-red-500/20 rounded-full flex items-center justify-center mx-auto animate-pulse">
+                <Mic className="w-10 h-10 text-red-400 animate-pulse" />
+              </div>
+              <p className="text-xl text-red-300">Listening...</p>
+              {/* Audio Level Visualization */}
+              <div className="flex items-center justify-center gap-1">
+                {Array.from({ length: 10 }).map((_, i) => (
+                  <div
+                    key={i}
+                    className={clsx(
+                      "w-2 bg-red-400 rounded-full transition-all duration-100",
+                      voiceState.audioLevel * 10 > i ? "h-8" : "h-2"
                     )}
-                    
-                    <p className="text-sm text-purple-300">
-                      {voiceState.isListening ? "Release to send" : "Hold to speak"}
-                    </p>
-                  </div>
-                )}
-                
-                {voiceState.error && (
-                  <div className="text-red-400 text-sm bg-red-900/20 p-3 rounded-lg">
-                    {voiceState.error}
-                  </div>
-                )}
+                  />
+                ))}
               </div>
-            ) : (
-              /* Chat Messages Display */
-              <div className="w-full max-w-4xl h-full flex flex-col">
-                <div className="flex-1 overflow-y-auto space-y-4 mb-4">
-                  {messages.map((message) => (
-                    <div
-                      key={message.id}
-                      className={clsx(
-                        'flex',
-                        message.isUser ? 'justify-end' : 'justify-start'
-                      )}
-                    >
-                      <div
-                        className={clsx(
-                          'max-w-md px-4 py-3 rounded-2xl shadow-lg',
-                          message.isUser
-                            ? 'bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-br-md'
-                            : 'bg-black/40 backdrop-blur-sm border border-purple-500/30 text-purple-100 rounded-bl-md'
-                        )}
-                      >
-                        <div className="flex items-center gap-2 mb-1">
-                          {message.isVoice && (
-                            <Volume2 className="w-3 h-3 text-purple-300" />
-                          )}
-                          {message.traceId && (
-                            <span className="text-xs text-purple-400 font-mono">
-                              {message.traceId}
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-sm leading-relaxed whitespace-pre-wrap">{message.message}</p>
-                        <p className={clsx(
-                          'text-xs mt-2 opacity-70',
-                          message.isUser ? 'text-purple-200' : 'text-purple-400'
-                        )}>
-                          {message.timestamp.toLocaleTimeString([], { 
-                            hour: '2-digit', 
-                            minute: '2-digit' 
-                          })}
-                          {!message.isUser && message.responseTime && (
-                            <span className="ml-2">• {message.responseTime}s</span>
-                          )}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                  
-                  {isLoading && (
-                    <div className="flex justify-start">
-                      <div className="bg-black/40 backdrop-blur-sm border border-purple-500/30 text-purple-100 max-w-md px-4 py-3 rounded-2xl rounded-bl-md">
-                        <div className="flex items-center space-x-3">
-                          <div className="w-8 h-8 bg-purple-600 rounded-full flex items-center justify-center">
-                            <span className="text-sm font-mono text-white">{elapsedTime}s</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Brain className="w-4 h-4 text-purple-400 animate-pulse" />
-                            <span className="text-sm text-purple-300">AI consciousness thinking...</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  
-                  <div ref={messagesEndRef} />
-                </div>
-                
-                {/* Voice Controls for Active Chat */}
-                {isVoiceMode && (
-                  <div className="flex justify-center">
-                    <Button
-                      onMouseDown={startListening}
-                      onMouseUp={stopListening}
-                      onMouseLeave={stopListening}
-                      disabled={voiceState.isProcessing || voiceState.isSpeaking || isLoading}
-                      className={clsx(
-                        "w-16 h-16 rounded-full text-white transition-all duration-200",
-                        voiceState.isListening 
-                          ? "bg-red-500 hover:bg-red-600 scale-110 animate-pulse" 
-                          : "bg-purple-600 hover:bg-purple-700 hover:scale-105"
-                      )}
-                    >
-                      {voiceState.isListening ? <MicOff className="w-6 h-6" /> : <Mic className="w-6 h-6" />}
-                    </Button>
-                  </div>
-                )}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="w-20 h-20 bg-purple-500/20 rounded-full flex items-center justify-center mx-auto">
+                <Brain className="w-10 h-10 text-purple-400" />
               </div>
-            )}
-          </div>
+              <p className="text-xl text-purple-300">Ready</p>
+            </div>
+          )}
         </div>
-        
-        {/* Side Panels */}
-        {showMemoryViewer && (
-          <div className="w-full lg:w-96 bg-black/20 backdrop-blur-sm border-l border-purple-500/20 overflow-y-auto">
-            <div className="p-4">
-              <div className="flex items-center gap-2 mb-4">
-                <Brain className="w-5 h-5 text-green-400" />
-                <h3 className="text-lg font-semibold text-green-400">Memory Viewer</h3>
-              </div>
-              <MemoryViewer />
+
+        {/* Voice Control Button */}
+        <div className="flex flex-col items-center gap-6">
+          <Button
+            onMouseDown={startListening}
+            onMouseUp={stopListening}
+            onMouseLeave={stopListening}
+            disabled={voiceState.isProcessing || voiceState.isSpeaking || isLoading}
+            className={clsx(
+              "w-32 h-32 rounded-full text-white transition-all duration-200 text-3xl shadow-2xl",
+              voiceState.isListening 
+                ? "bg-red-500 hover:bg-red-600 scale-110 animate-pulse shadow-red-500/50" 
+                : "bg-purple-600 hover:bg-purple-700 hover:scale-105 shadow-purple-500/50"
+            )}
+          >
+            {voiceState.isListening ? <MicOff className="w-12 h-12" /> : <Mic className="w-12 h-12" />}
+          </Button>
+          
+          <p className="text-lg text-purple-300">
+            {voiceState.isListening ? "Release to send" : "Hold to speak"}
+          </p>
+        </div>
+
+        {/* Error Display */}
+        {voiceState.error && (
+          <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2">
+            <div className="text-red-400 text-sm bg-red-900/20 p-3 rounded-lg backdrop-blur-sm">
+              {voiceState.error}
             </div>
           </div>
         )}
-        
-        {showMemoryGraph && (
-          <div className="w-full lg:w-96 bg-black/20 backdrop-blur-sm border-l border-purple-500/20 overflow-y-auto">
-            <div className="p-4">
-              <div className="flex items-center gap-2 mb-4">
-                <Brain className="w-5 h-5 text-blue-400" />
-                <h3 className="text-lg font-semibold text-blue-400">Memory Graph</h3>
-              </div>
-              <MemoryGraphVisualization />
-            </div>
-          </div>
+
+        {/* Clear Chat Button - Hidden but functional */}
+        {messages.length > 0 && (
+          <button
+            onClick={clearChat}
+            className="absolute top-4 right-4 text-purple-400 hover:text-white opacity-50 hover:opacity-100 transition-opacity"
+          >
+            <RefreshCw className="w-5 h-5" />
+          </button>
         )}
       </div>
 
-      {/* Text Input (for non-voice mode) */}
-      {!isVoiceMode && (
-        <div className="bg-black/20 backdrop-blur-sm border-t border-purple-500/20 px-4 py-4">
-          <div className="max-w-4xl mx-auto">
-            <div className="flex items-end gap-3 bg-black/40 backdrop-blur-sm border border-purple-500/30 rounded-2xl px-4 py-2">
-              <textarea
-                ref={textareaRef}
-                value={inputMessage}
-                onChange={(e) => setInputMessage(e.target.value)}
-                onKeyPress={handleKeyPress}
-                placeholder="Type your message to the AI consciousness..."
-                className="flex-1 bg-transparent text-purple-100 placeholder-purple-400 min-h-[3rem] max-h-32 focus:outline-none text-sm resize-none overflow-y-auto"
-                disabled={isLoading}
-                rows={1}
-              />
-              <button
-                onClick={() => sendMessage()}
-                disabled={!inputMessage.trim() || isLoading}
-                className={clsx(
-                  'w-8 h-8 rounded-full flex items-center justify-center transition-colors flex-shrink-0 mb-1',
-                  !inputMessage.trim() || isLoading
-                    ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
-                    : 'bg-purple-600 text-white hover:bg-purple-700'
-                )}
-              >
-                <Send className="w-4 h-4" />
-              </button>
-            </div>
-            <p className="text-xs text-purple-400 mt-2 text-center">
-              Press Enter to send • Shift+Enter for new line • Switch to Voice Mode for hands-free interaction
-            </p>
-          </div>
-        </div>
-      )}
 
-      {/* Suggestions Panel */}
-      <SuggestionsPanel
-        isVisible={showSuggestions}
-        onClose={() => setShowSuggestions(false)}
-        onSuggestionSelect={handleSuggestionSelect}
-      />
+
+
     </div>
   );
 } 

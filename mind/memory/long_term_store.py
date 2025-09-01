@@ -131,58 +131,81 @@ class LongTermMemory:
                             memory_type: Optional[str] = None,
                             limit: int = 5,
                             min_importance: float = 0.0) -> List[Memory]:
-        """Recall memories based on semantic similarity and filters"""
+        """Recall memories based on semantic similarity and filters - OPTIMIZED"""
         try:
             memories = []
             
-            # Determine which collections to search
+            # OPTIMIZATION: Prioritize collections based on query analysis
             collections_to_search = []
             if memory_type:
                 collections_to_search = [f"{memory_type.capitalize()}Memory"]
             else:
-                collections_to_search = ["EpisodicMemory", "SemanticMemory", 
-                                       "IdentityMemory", "RelationshipMemory"]
+                # Smart collection selection based on query type
+                query_lower = query.lower()
+                if any(word in query_lower for word in ['who', 'what', 'when', 'where', 'how', 'why']):
+                    # Factual questions - prioritize semantic and episodic
+                    collections_to_search = ["SemanticMemory", "EpisodicMemory"]
+                elif any(word in query_lower for word in ['i', 'me', 'my', 'purpose', 'identity']):
+                    # Identity-related - prioritize identity memories
+                    collections_to_search = ["IdentityMemory", "SemanticMemory"]
+                else:
+                    # Default: most important collections first
+                    collections_to_search = ["SemanticMemory", "EpisodicMemory"]
+                
+                # Limit to 2 collections for speed (instead of 4)
+                collections_to_search = collections_to_search[:2]
             
-            for collection_name in collections_to_search:
+            # OPTIMIZATION: Parallel search instead of sequential
+            import asyncio
+            search_tasks = []
+            
+            async def search_collection(collection_name):
                 try:
                     collection = self.client.collections.get(collection_name)
-                    
-                    # Semantic search - filter results after retrieval
                     results = collection.query.near_text(
                         query=query,
-                        limit=limit * 2  # Get more results to filter from
+                        limit=limit  # Reduced from limit * 2 for speed
                     )
-                    
-                    # Filter by importance after retrieval
-                    filtered_results = []
-                    for obj in results.objects:
-                        # Fix None comparison issue
-                        importance = obj.properties.get('importance', 0.0)
-                        if importance is None:
-                            importance = 0.0
-                        if importance >= min_importance:
-                            filtered_results.append(obj)
-                    
-                    # Take only the requested limit
-                    for obj in filtered_results[:limit]:
-                        # Fix Memory creation to only use expected fields
-                        memory = Memory(
-                            id=str(obj.uuid),
-                            timestamp=obj.properties.get('timestamp', ''),
-                            type=obj.properties.get('type', memory_type.lower() if memory_type else 'unknown'),
-                            content=obj.properties.get('content', ''),
-                            emotional_weight=obj.properties.get('emotional_weight', 0.0) or 0.0,
-                            importance=obj.properties.get('importance', 0.0) or 0.0,
-                            participants=obj.properties.get('participants', []) or [],
-                            tags=obj.properties.get('tags', []) or [],
-                            context=obj.properties.get('context', {}) or {},
-                            connections=obj.properties.get('connections', []) or []
-                        )
-                        memories.append(memory)
-                        
+                    return collection_name, results
                 except Exception as e:
                     logger.warning(f"Could not search {collection_name}: {e}")
+                    return collection_name, None
+            
+            # Run searches in parallel
+            search_tasks = [search_collection(name) for name in collections_to_search]
+            search_results = await asyncio.gather(*search_tasks, return_exceptions=True)
+            
+            # Process results from parallel searches
+            for collection_name, results in search_results:
+                if results is None or isinstance(results, Exception):
                     continue
+                    
+                # Filter by importance after retrieval
+                filtered_results = []
+                for obj in results.objects:
+                    # Fix None comparison issue
+                    importance = obj.properties.get('importance', 0.0)
+                    if importance is None:
+                        importance = 0.0
+                    if importance >= min_importance:
+                        filtered_results.append(obj)
+                
+                # Take only the requested limit
+                for obj in filtered_results[:limit]:
+                    # Fix Memory creation to only use expected fields
+                    memory = Memory(
+                        id=str(obj.uuid),
+                        timestamp=obj.properties.get('timestamp', ''),
+                        type=obj.properties.get('type', memory_type.lower() if memory_type else 'unknown'),
+                        content=obj.properties.get('content', ''),
+                        emotional_weight=obj.properties.get('emotional_weight', 0.0) or 0.0,
+                        importance=obj.properties.get('importance', 0.0) or 0.0,
+                        participants=obj.properties.get('participants', []) or [],
+                        tags=obj.properties.get('tags', []) or [],
+                        context=obj.properties.get('context', {}) or {},
+                        connections=obj.properties.get('connections', []) or []
+                    )
+                    memories.append(memory)
             
             # Sort by importance and emotional weight (handle None values)
             memories.sort(key=lambda m: (m.importance or 0.0) * (m.emotional_weight or 0.0), reverse=True)

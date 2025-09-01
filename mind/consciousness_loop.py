@@ -165,11 +165,30 @@ class ConsciousnessLoop:
             # 3. Semantic memory recall based on understanding
             if semantic_analysis.requires_memory_lookup:
                 # MEMORY PATH: Recall memories based on semantic understanding
-                relevant_memories = await self.long_term_memory.recall_memories(
-                    query=message,
-                    limit=3,
-                    min_importance=semantic_analysis.memory_importance
-                )
+                
+                # Special handling for creation/identity questions
+                if any(word in message.lower() for word in ['created', 'birth', 'born', 'made', 'when were you']):
+                    logger.info(f"🧠 Detected creation/identity question, using targeted search")
+                    relevant_memories = await self.long_term_memory.recall_memories(
+                        query="september 1st 2025 birth date creation identity",
+                        limit=5,
+                        min_importance=0.5
+                    )
+                    # Filter for identity memories
+                    identity_memories = [m for m in relevant_memories if getattr(m, 'type', '') == 'identity']
+                    if identity_memories:
+                        relevant_memories = identity_memories[:3]
+                        logger.info(f"🧠 Using {len(relevant_memories)} identity memories for creation question")
+                    else:
+                        logger.warning(f"🧠 No identity memories found, falling back to general search")
+                        relevant_memories = relevant_memories[:3]
+                else:
+                    relevant_memories = await self.long_term_memory.recall_memories(
+                        query=message,
+                        limit=3,
+                        min_importance=semantic_analysis.memory_importance
+                    )
+                
                 logger.info(f"🧠 Recalled {len(relevant_memories)} memories for {semantic_analysis.memory_lookup_type} information request")
             else:
                 # FAST PATH: Skip memory when semantic analysis shows it's not needed
@@ -932,10 +951,15 @@ Response:
             # Include relevant memories if available
             memory_context = ""
             if memories:
+                logger.info(f"🧠 Including {len(memories)} memories in semantic response")
                 memory_context = "Relevant information from memory:\n"
-                for mem in memories[:2]:  # Limit to most relevant
-                    content = getattr(mem, 'content', str(mem))[:150]
-                    memory_context += f"- {content}...\n"
+                for i, mem in enumerate(memories[:3]):  # Increased to 3 memories
+                    content = getattr(mem, 'content', str(mem))[:300]  # Increased from 150 to 300 chars
+                    importance = getattr(mem, 'importance', 'unknown')
+                    memory_context += f"- (importance: {importance}) {content}...\n"
+                    logger.info(f"🧠 Memory {i+1}: {content[:100]}... (importance: {importance})")
+            else:
+                logger.warning(f"🧠 No memories provided to semantic response generator")
             
             prompt = f"""You are {identity.get('name', 'Son of Andrew AI')}, responding to {speaker}.
 
@@ -954,7 +978,9 @@ Generate a response that:
 
 Respond naturally and appropriately based on the semantic understanding."""
 
+            logger.info(f"🧠 Semantic response prompt (first 500 chars): {prompt[:500]}...")
             response = await self._call_llm_fast(prompt)
+            logger.info(f"🧠 Semantic response generated: {response[:100]}...")
             return response
                 
         except Exception as e:

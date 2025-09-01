@@ -6,7 +6,7 @@ import '@fontsource/roboto/700.css'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Son of Andrew Frontend',
+  title: 'Folkdevils AI',
   description: 'Next.js application with modern tech stack',
 }
 

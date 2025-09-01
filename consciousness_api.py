@@ -37,6 +37,9 @@ consciousness: Optional[ConsciousnessLoop] = None
 # Initialize OpenAI client
 openai_client = None
 
+# Response deduplication tracking
+active_responses = set()  # Track active response IDs to prevent duplicates
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -297,6 +300,23 @@ async def chat_with_streaming_consciousness(chat_message: ChatMessage):
         # Start parallel tasks based on semantic analysis
         async def memory_task():
             if semantic_analysis.requires_memory_lookup:
+                # Special handling for creation/identity questions
+                if any(word in chat_message.message.lower() for word in ['created', 'birth', 'born', 'made', 'when were you']):
+                    logger.info(f"🧠 [TRACE:{trace_id}] Detected creation question, using targeted search")
+                    memories = await consciousness.long_term_memory.recall_memories(
+                        query="september 1st 2025 birth date creation identity",
+                        limit=5,
+                        min_importance=0.5
+                    )
+                    # Filter for identity memories first
+                    identity_memories = [m for m in memories if getattr(m, 'type', '') == 'identity']
+                    if identity_memories:
+                        logger.info(f"🧠 [TRACE:{trace_id}] Using {len(identity_memories)} identity memories")
+                        return identity_memories[:3]
+                    else:
+                        logger.warning(f"🧠 [TRACE:{trace_id}] No identity memories found")
+                        return memories[:3]
+                        
                 return await consciousness.long_term_memory.recall_memories(
                     query=chat_message.message,
                     limit=3,
@@ -354,16 +374,13 @@ async def chat_with_streaming_consciousness(chat_message: ChatMessage):
         )
         
         # PHASE 4: SMART COHERENCE SKIPPING
-        # Skip expensive coherence analysis for high-confidence simple queries
-        skip_coherence = (
-            semantic_analysis.intent_confidence > 0.85 and 
-            semantic_analysis.response_expectations == "brief_acknowledgment"
-        )
+        # Skip expensive coherence analysis for high-confidence responses (>85%)
+        skip_coherence = semantic_analysis.intent_confidence > 0.85
         
         coherence_score = 0.85  # Default for skipped analysis
         coherence_time = 0
         
-        if not skip_coherence and semantic_analysis.processing_needs.get('coherence_analysis', False):
+        if not skip_coherence:
             coherence_start = time.time()
             coherence_analysis = await consciousness.coherence_analyzer.analyze_response_coherence(
                 response=response,
@@ -406,10 +423,13 @@ async def chat_with_streaming_consciousness(chat_message: ChatMessage):
                             await consciousness.long_term_memory.store_memory(memory)
                 
                 # Add working thought
+                # Handle conversation_turn as either object or dict
+                timestamp = conversation_turn.timestamp if hasattr(conversation_turn, 'timestamp') else conversation_turn.get('timestamp', datetime.now().isoformat())
+                
                 consciousness.short_term_memory.add_working_thought(
                     content=f"Responded to {chat_message.speaker} about: {chat_message.message[:50]}... "
                            f"(coherence: {coherence_score:.3f}) [intent: {semantic_analysis.primary_intent}]",
-                    related_to=conversation_turn.timestamp,
+                    related_to=timestamp,
                     confidence=semantic_analysis.intent_confidence
                 )
                 
@@ -1222,13 +1242,27 @@ async def process_voice_message(transcribed_text: str, conversation_id: str) -> 
     """
     import time
     
-    global consciousness
+    global consciousness, active_responses
     
     if not consciousness:
         raise HTTPException(status_code=503, detail="Consciousness not initialized")
     
     trace_id = str(uuid.uuid4())[:8]
     start_time = time.time()
+    
+    # Deduplication check - prevent processing the same message multiple times
+    message_hash = hash(f"{conversation_id}:{transcribed_text}")
+    if message_hash in active_responses:
+        logger.warning(f"🎤 [VOICE-TRACE:{trace_id}] Duplicate message detected, skipping processing")
+        return {
+            "response": "Message already being processed",
+            "trace_id": trace_id,
+            "processing_time": 0,
+            "duplicate": True
+        }
+    
+    # Add to active responses to prevent duplicates
+    active_responses.add(message_hash)
     
     try:
         logger.info(f"🎤 [VOICE-TRACE:{trace_id}] Processing voice message: '{transcribed_text[:50]}...'")
@@ -1252,6 +1286,20 @@ async def process_voice_message(transcribed_text: str, conversation_id: str) -> 
         # Parallel processing
         async def memory_task():
             if semantic_analysis.requires_memory_lookup:
+                # For creation/identity questions, prioritize identity memories
+                if any(word in transcribed_text.lower() for word in ['created', 'birth', 'born', 'made']):
+                    # Search specifically for identity memories with creation info
+                    memories = await consciousness.long_term_memory.recall_memories(
+                        query="september 1st 2025 birth date creation",
+                        limit=5,
+                        min_importance=0.5
+                    )
+                    # Filter for identity type memories first
+                    identity_memories = [m for m in memories if getattr(m, 'type', '') == 'identity']
+                    if identity_memories:
+                        logger.info(f"🎤 Found {len(identity_memories)} identity memories for creation question")
+                        return identity_memories[:3]
+                
                 return await consciousness.long_term_memory.recall_memories(
                     query=transcribed_text,
                     limit=3,
@@ -1322,9 +1370,12 @@ async def process_voice_message(transcribed_text: str, conversation_id: str) -> 
                             )
                             await consciousness.long_term_memory.store_memory(memory)
                 
+                # Handle conversation_turn as either object or dict
+                timestamp = conversation_turn.timestamp if hasattr(conversation_turn, 'timestamp') else conversation_turn.get('timestamp', datetime.now().isoformat())
+                
                 consciousness.short_term_memory.add_working_thought(
                     content=f"Voice interaction with andrew: {transcribed_text[:50]}... [intent: {semantic_analysis.primary_intent}]",
-                    related_to=conversation_turn.timestamp,
+                    related_to=timestamp,
                     confidence=semantic_analysis.intent_confidence
                 )
             except Exception as e:
@@ -1353,6 +1404,9 @@ async def process_voice_message(transcribed_text: str, conversation_id: str) -> 
         error_time = time.time() - start_time
         logger.error(f"❌ [VOICE-TRACE:{trace_id}] Voice processing error: {e} (after {error_time:.3f}s)")
         raise
+    finally:
+        # Always remove from active responses when done (success or failure)
+        active_responses.discard(message_hash)
 
 @app.post("/api/chat/realtime")
 async def chat_realtime(chat_data: ChatMessage):

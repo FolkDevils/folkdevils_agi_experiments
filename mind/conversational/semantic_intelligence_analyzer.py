@@ -68,25 +68,31 @@ class SemanticIntelligenceAnalyzer:
     
     async def analyze_semantic_intent(self, message: str, conversation_context: List[Any] = None, identity_context: Dict[str, Any] = None) -> SemanticAnalysis:
         """
-        Analyze message using pure semantic understanding
+        Analyze message using pure semantic understanding - optimized for speed
         
         This is the core intelligence function that replaces ALL pattern matching
         """
         try:
-            # Build context for semantic analysis
+            # FAST PATH: Quick check for very simple cases to avoid LLM call
+            fast_analysis = self._try_fast_semantic_analysis(message)
+            if fast_analysis:
+                logger.info(f"⚡ Fast semantic analysis: {fast_analysis.primary_intent} "
+                           f"(confidence: {fast_analysis.intent_confidence:.2f})")
+                # Apply safety net even to fast analysis
+                fast_analysis = self._force_memory_lookup_if_needed(fast_analysis, message)
+                return fast_analysis
+            
+            # FULL PATH: LLM-based semantic understanding for complex cases
             context_info = self._build_analysis_context(conversation_context, identity_context)
-            
-            # Use LLM for semantic understanding
             analysis_prompt = self._create_semantic_analysis_prompt(message, context_info)
-            
-            # Get semantic understanding from LLM
             semantic_result = await self._get_llm_semantic_analysis(analysis_prompt)
-            
-            # Parse and structure the semantic analysis
             analysis = self._parse_semantic_analysis(semantic_result, message)
             
             logger.info(f"🧠 Semantic Analysis: {analysis.primary_intent} "
                        f"(confidence: {analysis.intent_confidence:.2f}) - {analysis.intent_reasoning}")
+            
+            # Apply safety net to force memory lookup for AI identity questions
+            analysis = self._force_memory_lookup_if_needed(analysis, message)
             
             return analysis
             
@@ -94,6 +100,65 @@ class SemanticIntelligenceAnalyzer:
             logger.error(f"❌ Error in semantic analysis: {e}")
             # Safe fallback that still maintains semantic approach
             return self._create_fallback_analysis(message)
+    
+    def _try_fast_semantic_analysis(self, message: str) -> Optional[SemanticAnalysis]:
+        """Fast path for simple, common messages to avoid LLM call"""
+        message_lower = message.lower().strip()
+        
+        # Very simple greetings and acknowledgments
+        simple_greetings = ['hi', 'hello', 'hey', 'thanks', 'thank you', 'ok', 'okay', 'yes', 'no']
+        if message_lower in simple_greetings or len(message_lower) <= 10:
+            return SemanticAnalysis(
+                primary_intent="simple_acknowledgment",
+                intent_confidence=0.95,
+                intent_reasoning="Simple greeting or acknowledgment detected",
+                requires_memory_lookup=False,
+                memory_lookup_type="none",
+                memory_importance=0.0,
+                cognitive_complexity=0.1,
+                processing_needs={
+                    "planning": False,
+                    "coherence_analysis": False,
+                    "metacognitive_reflection": False,
+                    "deep_memory_analysis": False
+                },
+                estimated_response_time=1.0,
+                conversation_type="casual",
+                emotional_tone="neutral",
+                response_expectations="brief_acknowledgment",
+                requires_context=False,
+                context_type="none",
+                overall_confidence=0.95,
+                semantic_reasoning="Simple message requiring minimal processing"
+            )
+        
+        # Simple questions (very short)
+        if message_lower.endswith('?') and len(message_lower) <= 20:
+            return SemanticAnalysis(
+                primary_intent="simple_question",
+                intent_confidence=0.90,
+                intent_reasoning="Short question detected",
+                requires_memory_lookup=True,
+                memory_lookup_type="factual",
+                memory_importance=0.3,
+                cognitive_complexity=0.3,
+                processing_needs={
+                    "planning": False,
+                    "coherence_analysis": False,
+                    "metacognitive_reflection": False,
+                    "deep_memory_analysis": False
+                },
+                estimated_response_time=2.0,
+                conversation_type="casual",
+                emotional_tone="neutral",
+                response_expectations="brief_explanation",
+                requires_context=False,
+                context_type="minimal",
+                overall_confidence=0.90,
+                semantic_reasoning="Simple question requiring basic response"
+            )
+        
+        return None  # No fast path available, use full LLM analysis
     
     def _build_analysis_context(self, conversation_context: List[Any], identity_context: Dict[str, Any]) -> str:
         """Build contextual information for semantic analysis"""
@@ -126,9 +191,24 @@ Provide a semantic analysis focusing on MEANING and INTENT, not word patterns:
 1. PRIMARY INTENT: What does the user actually want/mean? (information_request, greeting, philosophical_inquiry, personal_sharing, problem_solving, etc.)
 
 2. MEMORY REQUIREMENTS: Does this require looking up stored information?
-   - Type of memory needed (biographical, factual, episodic, semantic, relational)
-   - Importance level (0.0 to 1.0)
+   CRITICAL: Questions about the AI's identity, background, company, employer, work, or personal details ALWAYS require memory lookup!
+   CRITICAL: Questions about AI creation, birth, origins, when it was built/made ALWAYS require memory lookup!
+   CRITICAL: Any question asking the AI to "remember" or "recall" something ALWAYS requires memory lookup!
+   - Type of memory needed (biographical, factual, episodic, semantic, relational, identity)
+   - Importance level (0.0 to 1.0) 
    - Specific information being sought
+   
+   Examples requiring memory:
+   - "What company do you work for?" → YES, biographical memory needed
+   - "Who are you?" → YES, identity memory needed  
+   - "What is your background?" → YES, biographical memory needed
+   - "Tell me about yourself" → YES, identity memory needed
+   - "When were you created/built/made?" → YES, identity memory needed
+   - "Do you remember when you were born?" → YES, episodic memory needed
+   - "Can you recall your origins?" → YES, identity memory needed
+   - "Who created you?" → YES, biographical memory needed
+   - "Do you remember that..." → YES, episodic memory needed
+   - "Can you look into your memory..." → YES, episodic memory needed
 
 3. COGNITIVE COMPLEXITY: How much thinking/processing does this require?
    - Cognitive complexity score (0.0 to 1.0)
@@ -170,13 +250,14 @@ Respond in JSON format:
 }}"""
     
     async def _get_llm_semantic_analysis(self, prompt: str) -> str:
-        """Get semantic analysis from LLM"""
+        """Get semantic analysis from LLM - optimized for speed"""
         try:
             response = await self.client.chat.completions.create(
                 model="gpt-4o-mini",  # Fast but intelligent enough for semantic analysis
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=800,
-                temperature=0.3  # Lower temperature for consistent analysis
+                max_tokens=400,  # Reduced for faster processing
+                temperature=0.1,  # Lower temperature for faster, more consistent analysis
+                stream=False
             )
             
             return response.choices[0].message.content.strip()
@@ -327,4 +408,52 @@ Respond with semantic understanding in JSON format."""
             'pattern_usage': 'NONE - Eliminated all regex patterns',
             'intelligence_type': 'Semantic meaning-based analysis',
             'cognitive_approach': 'Understanding intent and meaning, not word matching'
-        } 
+        }
+    
+    def _force_memory_lookup_if_needed(self, analysis: SemanticAnalysis, message: str) -> SemanticAnalysis:
+        """
+        Safety net: Force memory lookup for AI identity/creation questions that might be misclassified
+        """
+        message_lower = message.lower()
+        
+        # Keywords that ALWAYS indicate memory lookup is needed for AI identity/creation
+        ai_identity_keywords = [
+            'when were you created', 'when were you built', 'when were you made',
+            'who created you', 'who built you', 'who made you',
+            'do you remember when you were', 'can you recall when you were',
+            'remember when you were created', 'remember when you were built',
+            'your birthday', 'your birth', 'your origins', 'your creation',
+            'folk devils', 'who do you work for', 'what company',
+            'tell me about yourself', 'who are you', 'when you were created',
+            'when you were built', 'when you were made', 'you were created',
+            'you were built', 'you were made'
+        ]
+        
+        # Check if any AI identity keywords are present
+        contains_ai_identity = any(keyword in message_lower for keyword in ai_identity_keywords)
+        
+        # Additional checks for common patterns
+        if not contains_ai_identity:
+            # Check for "remember" + creation words
+            if 'remember' in message_lower and any(word in message_lower for word in ['created', 'built', 'made', 'birth']):
+                contains_ai_identity = True
+            # Check for creation questions without exact matches
+            elif any(word in message_lower for word in ['created', 'built', 'made']) and 'you' in message_lower:
+                contains_ai_identity = True
+        
+        # Debug logging
+        logger.info(f"🔍 Safety net check: message='{message_lower}', contains_ai_identity={contains_ai_identity}, current_requires_memory={analysis.requires_memory_lookup}")
+        
+        if contains_ai_identity and not analysis.requires_memory_lookup:
+            logger.warning(f"🔍 Safety net triggered: Forcing memory lookup for AI identity question: '{message[:50]}...'")
+            
+            # Override the analysis to force memory lookup
+            analysis.requires_memory_lookup = True
+            analysis.memory_lookup_type = "identity"
+            analysis.memory_importance = 0.9  # High importance
+            analysis.processing_needs["deep_memory_analysis"] = True
+            analysis.semantic_reasoning += " [SAFETY NET: Forced memory lookup for AI identity question]"
+        elif contains_ai_identity and analysis.requires_memory_lookup:
+            logger.info(f"🔍 Safety net: AI identity question already has memory lookup enabled")
+        
+        return analysis 
